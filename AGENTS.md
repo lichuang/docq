@@ -23,7 +23,7 @@ See the overview table at the top of `docs/phase.md` (each phase has ✅ / ⬜).
 | P2 Storage trait + SQLite basics | ✅ done (no InMemoryStorage — removed) |
 | P3.1 sqlite-vec integration | ✅ done |
 | P3.2 FTS5 integration | ✅ done |
-| P3.3 Transactional consistency (StorageTx) | ⬜ pending |
+| P3.3 Transactional consistency (StorageTx) | ✅ done |
 | P4–P13 | ⬜ pending |
 
 ## Common commands
@@ -92,12 +92,13 @@ cargo clippy --all-features -- -D warnings
 
 1. **The `Storage` trait stays in `docq-core`**, not in `docq-storage`. This is dependency inversion: `indexer` and `retrieve` only need `docq-core` + `docq-model` and do not pull `rusqlite`/`sqlite-vec` at compile time. A future `docq-storage-pg` would be a drop-in replacement.
 2. **No `InMemoryStorage`**. Tests use `SqliteStorage::open_in_memory()` (SQLite `:memory:` mode, millisecond startup).
-3. **`chunks.text` is the original text; `fts_chunks.text` is the jieba-tokenized space-joined text**. `Storage::add_fts_chunks(chunk_ids, tokenized_texts)` writes to the FTS table separately — `add_chunks` only writes the `chunks` table. This is an explicit decision in phase.md P3.2; the P6 indexer will call both methods.
-4. **`Document.id` is the file-relative path** — renaming the file triggers a reindex, keeping the logic simple.
-5. **`Chunk.id` is the SHA-256 of `text`** — naturally enables content-addressed dedup and change detection.
-6. **Embedding model upgrades trigger an explicit reindex**: the `model_versions` table records the current model spec for each role; the indexer compares the stored spec with the live one and forces a re-embedding when they differ, avoiding silent staleness.
-7. **Invalid citations in the `ask` flow are filtered out**: after the LLM produces `[N]` markers, only those that actually appear in the provided context are kept.
-8. **Not in v0.1**: MCP server, PDF/xlsx/docx parsing, Python bindings, file-watcher auto-indexing, `docq model` subcommand; citation precision is limited to "file + byte range" (not heading/page/row).
+3. **`chunks.text` is the original text; `fts_chunks.text` is the jieba-tokenized space-joined text**. `StorageTx::add_fts_chunks(chunk_ids, tokenized_texts)` writes to the FTS table separately — `add_chunks` only writes the `chunks` table. This is an explicit decision in phase.md P3.2; the P6 indexer will call both methods inside one `begin_tx` / `commit` bracket.
+4. **All mutations flow through `StorageTx`** — `Storage` is read-only (queries + `init` + `begin_tx`). This enforces transactional writes at the type level: `docq-retrieve` holds `&Storage` and cannot write; `docq-indexer` holds `&mut dyn StorageTx` and all four indexed tables (`documents` / `chunks` / `vec_chunks` / `fts_chunks`) plus `model_versions` commit atomically, so a re-embedding failure cannot leave the store half-written.
+5. **`Document.id` is the file-relative path** — renaming the file triggers a reindex, keeping the logic simple.
+6. **`Chunk.id` is the SHA-256 of `text`** — naturally enables content-addressed dedup and change detection.
+7. **Embedding model upgrades trigger an explicit reindex**: the `model_versions` table records the current model spec for each role; the indexer compares the stored spec with the live one and forces a re-embedding when they differ, avoiding silent staleness.
+8. **Invalid citations in the `ask` flow are filtered out**: after the LLM produces `[N]` markers, only those that actually appear in the provided context are kept.
+9. **Not in v0.1**: MCP server, PDF/xlsx/docx parsing, Python bindings, file-watcher auto-indexing, `docq model` subcommand; citation precision is limited to "file + byte range" (not heading/page/row).
 
 ## Code style
 

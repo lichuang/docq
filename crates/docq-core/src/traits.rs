@@ -36,31 +36,34 @@ pub trait Chunker: Send + Sync {
 pub trait Storage: Send + Sync {
   fn init(&self) -> Result<()>;
 
-  // ---- documents ----
+  // ---- reads / queries ----
 
-  fn add_document(&self, doc: &Document) -> Result<()>;
   fn get_document(&self, doc_id: &str) -> Result<Option<Document>>;
   fn list_documents(&self) -> Result<Vec<Document>>;
-  fn delete_document(&self, doc_id: &str) -> Result<()>;
-
-  // ---- chunks ----
-
-  fn add_chunks(&self, chunks: &[Chunk]) -> Result<()>;
   fn get_chunks(&self, chunk_ids: &[String]) -> Result<Vec<Chunk>>;
-  fn delete_chunks_by_doc(&self, doc_id: &str) -> Result<()>;
-
-  // ---- vectors ----
-
-  fn add_vectors(&self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()>;
   fn search_vectors(&self, embedding: &[f32], top_k: usize) -> Result<Vec<(String, f32)>>;
-
-  // ---- full-text search ----
-
-  fn add_fts_chunks(&self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()>;
   fn search_text(&self, query: &str, top_k: usize) -> Result<Vec<(String, f32)>>;
-
-  // ---- model versions ----
-
-  fn set_model_version(&self, role: &str, version: &ModelSpec) -> Result<()>;
   fn get_model_version(&self, role: &str) -> Result<Option<ModelSpec>>;
+
+  // ---- transactions ----
+
+  /// Begin a write transaction covering `documents` / `chunks` / `vec_chunks`
+  /// / `fts_chunks` / `model_versions`. Operations on the returned [`StorageTx`]
+  /// are atomic: they either all commit via [`StorageTx::commit`] or all roll
+  /// back when the transaction is dropped without committing.
+  fn begin_tx(&self) -> Result<Box<dyn StorageTx + '_>>;
+}
+
+/// Atomic write transaction over the indexed tables. All mutations flow
+/// through this trait so a re-index / re-embed failure cannot leave the
+/// store half-written.
+pub trait StorageTx {
+  fn add_document(&mut self, doc: &Document) -> Result<()>;
+  fn delete_document(&mut self, doc_id: &str) -> Result<()>;
+  fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()>;
+  fn delete_chunks_by_doc(&mut self, doc_id: &str) -> Result<()>;
+  fn add_vectors(&mut self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()>;
+  fn add_fts_chunks(&mut self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()>;
+  fn set_model_version(&mut self, role: &str, version: &ModelSpec) -> Result<()>;
+  fn commit(&mut self) -> Result<()>;
 }

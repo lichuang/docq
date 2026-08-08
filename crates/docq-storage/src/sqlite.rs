@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Once};
 
 use chrono::{DateTime, Utc};
-use docq_core::{Chunk, Document, ModelSpec, Result, Storage, StoreError};
+use docq_core::{Chunk, Document, ModelSpec, Result, Storage, StorageTx, StoreError};
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use sqlite_vec::sqlite3_vec_init;
@@ -58,6 +58,81 @@ fn poisoned() -> StoreError {
   StoreError::Other("mutex poisoned".into())
 }
 
+fn insert_document(conn: &Connection, doc: &Document) -> rusqlite::Result<()> {
+  conn.execute(
+    "INSERT OR REPLACE INTO documents
+     (doc_id, file_path, content_hash, content_size, indexed_at)
+   VALUES (?1, ?2, ?3, ?4, ?5)",
+    params![
+      doc.id,
+      doc.file_path.to_string_lossy(),
+      doc.content_hash,
+      doc.content_size as i64,
+      doc.indexed_at.to_rfc3339(),
+    ],
+  )?;
+  Ok(())
+}
+
+fn insert_chunks(conn: &Connection, chunks: &[Chunk]) -> rusqlite::Result<()> {
+  let mut stmt = conn.prepare(
+    "INSERT OR REPLACE INTO chunks (chunk_id, doc_id, text, start_byte, end_byte)
+     VALUES (?1, ?2, ?3, ?4, ?5)",
+  )?;
+  for chunk in chunks {
+    stmt.execute(params![
+      chunk.id,
+      chunk.doc_id,
+      chunk.text,
+      chunk.byte_range.start as i64,
+      chunk.byte_range.end as i64,
+    ])?;
+  }
+  Ok(())
+}
+
+fn insert_vectors(conn: &Connection, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> rusqlite::Result<()> {
+  let mut stmt = conn.prepare("INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)")?;
+  for (id, emb) in chunk_ids.iter().zip(embeddings.iter()) {
+    let bytes = embedding_to_bytes(emb);
+    stmt.execute(params![id, bytes])?;
+  }
+  Ok(())
+}
+
+fn insert_fts(conn: &Connection, chunk_ids: &[String], tokenized_texts: &[String]) -> rusqlite::Result<()> {
+  let mut stmt = conn.prepare("INSERT OR REPLACE INTO fts_chunks (chunk_id, text) VALUES (?1, ?2)")?;
+  for (id, text) in chunk_ids.iter().zip(tokenized_texts.iter()) {
+    stmt.execute(params![id, text])?;
+  }
+  Ok(())
+}
+
+fn delete_document(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
+  conn.execute("DELETE FROM documents WHERE doc_id = ?1", params![doc_id])?;
+  Ok(())
+}
+
+fn delete_chunks_by_doc(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
+  conn.execute("DELETE FROM chunks WHERE doc_id = ?1", params![doc_id])?;
+  Ok(())
+}
+
+fn set_model_version(conn: &Connection, role: &str, version: &ModelSpec) -> rusqlite::Result<()> {
+  conn.execute(
+    "INSERT OR REPLACE INTO model_versions (role, repo_id, filename, revision, checksum)
+     VALUES (?1, ?2, ?3, ?4, ?5)",
+    params![
+      role,
+      version.repo_id,
+      version.filename,
+      version.revision,
+      version.checksum
+    ],
+  )?;
+  Ok(())
+}
+
 impl Storage for SqliteStorage {
   fn init(&self) -> Result<()> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
@@ -111,25 +186,6 @@ impl Storage for SqliteStorage {
          text,
          tokenize='unicode61'
        );",
-      )
-      .map_err(map_rusqlite)?;
-    Ok(())
-  }
-
-  fn add_document(&self, doc: &Document) -> Result<()> {
-    let conn = self.conn.lock().map_err(|_| poisoned())?;
-    conn
-      .execute(
-        "INSERT OR REPLACE INTO documents
-         (doc_id, file_path, content_hash, content_size, indexed_at)
-       VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-          doc.id,
-          doc.file_path.to_string_lossy(),
-          doc.content_hash,
-          doc.content_size as i64,
-          doc.indexed_at.to_rfc3339(),
-        ],
       )
       .map_err(map_rusqlite)?;
     Ok(())
@@ -200,38 +256,6 @@ impl Storage for SqliteStorage {
     Ok(docs)
   }
 
-  fn delete_document(&self, doc_id: &str) -> Result<()> {
-    let conn = self.conn.lock().map_err(|_| poisoned())?;
-    conn.execute("DELETE FROM documents WHERE doc_id = ?1", params![doc_id]).map_err(map_rusqlite)?;
-    Ok(())
-  }
-
-  fn add_chunks(&self, chunks: &[Chunk]) -> Result<()> {
-    let mut conn = self.conn.lock().map_err(|_| poisoned())?;
-    let tx = conn.transaction().map_err(map_rusqlite)?;
-    {
-      let mut stmt = tx
-        .prepare(
-          "INSERT OR REPLACE INTO chunks (chunk_id, doc_id, text, start_byte, end_byte)
-           VALUES (?1, ?2, ?3, ?4, ?5)",
-        )
-        .map_err(map_rusqlite)?;
-      for chunk in chunks {
-        stmt
-          .execute(params![
-            chunk.id,
-            chunk.doc_id,
-            chunk.text,
-            chunk.byte_range.start as i64,
-            chunk.byte_range.end as i64,
-          ])
-          .map_err(map_rusqlite)?;
-      }
-    }
-    tx.commit().map_err(map_rusqlite)?;
-    Ok(())
-  }
-
   fn get_chunks(&self, chunk_ids: &[String]) -> Result<Vec<Chunk>> {
     if chunk_ids.is_empty() {
       return Ok(Vec::new());
@@ -269,27 +293,6 @@ impl Storage for SqliteStorage {
     Ok(chunks)
   }
 
-  fn delete_chunks_by_doc(&self, doc_id: &str) -> Result<()> {
-    let conn = self.conn.lock().map_err(|_| poisoned())?;
-    conn.execute("DELETE FROM chunks WHERE doc_id = ?1", params![doc_id]).map_err(map_rusqlite)?;
-    Ok(())
-  }
-
-  fn add_vectors(&self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()> {
-    if chunk_ids.len() != embeddings.len() {
-      return Err(StoreError::Other("chunk_ids and embeddings length mismatch".into()).into());
-    }
-    let conn = self.conn.lock().map_err(|_| poisoned())?;
-    let mut stmt = conn
-      .prepare("INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)")
-      .map_err(map_rusqlite)?;
-    for (id, emb) in chunk_ids.iter().zip(embeddings.iter()) {
-      let bytes = embedding_to_bytes(emb);
-      stmt.execute(params![id, bytes]).map_err(map_rusqlite)?;
-    }
-    Ok(())
-  }
-
   fn search_vectors(&self, embedding: &[f32], top_k: usize) -> Result<Vec<(String, f32)>> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     let bytes = embedding_to_bytes(embedding);
@@ -311,20 +314,6 @@ impl Storage for SqliteStorage {
     Ok(rows)
   }
 
-  fn add_fts_chunks(&self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()> {
-    if chunk_ids.len() != tokenized_texts.len() {
-      return Err(StoreError::Other("chunk_ids and tokenized_texts length mismatch".into()).into());
-    }
-    let conn = self.conn.lock().map_err(|_| poisoned())?;
-    let mut stmt = conn
-      .prepare("INSERT OR REPLACE INTO fts_chunks (chunk_id, text) VALUES (?1, ?2)")
-      .map_err(map_rusqlite)?;
-    for (id, text) in chunk_ids.iter().zip(tokenized_texts.iter()) {
-      stmt.execute(params![id, text]).map_err(map_rusqlite)?;
-    }
-    Ok(())
-  }
-
   fn search_text(&self, query: &str, top_k: usize) -> Result<Vec<(String, f32)>> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     let mut stmt = conn
@@ -344,24 +333,6 @@ impl Storage for SqliteStorage {
       .collect::<rusqlite::Result<Vec<_>>>()
       .map_err(map_rusqlite)?;
     Ok(rows)
-  }
-
-  fn set_model_version(&self, role: &str, version: &ModelSpec) -> Result<()> {
-    let conn = self.conn.lock().map_err(|_| poisoned())?;
-    conn
-      .execute(
-        "INSERT OR REPLACE INTO model_versions (role, repo_id, filename, revision, checksum)
-       VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-          role,
-          version.repo_id,
-          version.filename,
-          version.revision,
-          version.checksum
-        ],
-      )
-      .map_err(map_rusqlite)?;
-    Ok(())
   }
 
   fn get_model_version(&self, role: &str) -> Result<Option<ModelSpec>> {
@@ -393,6 +364,90 @@ impl Storage for SqliteStorage {
       None => Ok(None),
     }
   }
+
+  fn begin_tx(&self) -> Result<Box<dyn StorageTx + '_>> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    conn.execute_batch("BEGIN").map_err(map_rusqlite)?;
+    Ok(Box::new(SqliteTransaction {
+      conn: self.conn.clone(),
+      committed: false,
+    }))
+  }
+}
+
+pub struct SqliteTransaction {
+  conn: Arc<Mutex<Connection>>,
+  committed: bool,
+}
+
+impl StorageTx for SqliteTransaction {
+  fn add_document(&mut self, doc: &Document) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    insert_document(&conn, doc).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn delete_document(&mut self, doc_id: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    crate::sqlite::delete_document(&conn, doc_id).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    insert_chunks(&conn, chunks).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn delete_chunks_by_doc(&mut self, doc_id: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    crate::sqlite::delete_chunks_by_doc(&conn, doc_id).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn add_vectors(&mut self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()> {
+    if chunk_ids.len() != embeddings.len() {
+      return Err(StoreError::Other("chunk_ids and embeddings length mismatch".into()).into());
+    }
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    insert_vectors(&conn, chunk_ids, embeddings).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn add_fts_chunks(&mut self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()> {
+    if chunk_ids.len() != tokenized_texts.len() {
+      return Err(StoreError::Other("chunk_ids and tokenized_texts length mismatch".into()).into());
+    }
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    insert_fts(&conn, chunk_ids, tokenized_texts).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn set_model_version(&mut self, role: &str, version: &ModelSpec) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    crate::sqlite::set_model_version(&conn, role, version).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn commit(&mut self) -> Result<()> {
+    if self.committed {
+      return Err(StoreError::Other("transaction already committed".into()).into());
+    }
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    conn.execute_batch("COMMIT").map_err(map_rusqlite)?;
+    self.committed = true;
+    Ok(())
+  }
+}
+
+impl Drop for SqliteTransaction {
+  fn drop(&mut self) {
+    if !self.committed {
+      if let Ok(conn) = self.conn.lock() {
+        let _ = conn.execute_batch("ROLLBACK");
+      }
+    }
+  }
 }
 
 #[cfg(test)]
@@ -420,6 +475,12 @@ mod tests {
     }
   }
 
+  fn commit<F: FnOnce(&mut dyn docq_core::StorageTx)>(storage: &SqliteStorage, body: F) {
+    let mut tx = storage.begin_tx().unwrap();
+    body(&mut *tx);
+    tx.commit().unwrap();
+  }
+
   #[test]
   fn test_document_crud() {
     let storage = SqliteStorage::open_in_memory().unwrap();
@@ -427,8 +488,10 @@ mod tests {
 
     let doc1 = make_doc("doc1.txt", "hello world");
     let doc2 = make_doc("doc2.txt", "foo bar");
-    storage.add_document(&doc1).unwrap();
-    storage.add_document(&doc2).unwrap();
+    commit(&storage, |tx| {
+      tx.add_document(&doc1).unwrap();
+      tx.add_document(&doc2).unwrap();
+    });
 
     let got = storage.get_document("doc1.txt").unwrap();
     assert!(got.is_some());
@@ -437,7 +500,9 @@ mod tests {
     let list = storage.list_documents().unwrap();
     assert_eq!(list.len(), 2);
 
-    storage.delete_document("doc1.txt").unwrap();
+    commit(&storage, |tx| {
+      tx.delete_document("doc1.txt").unwrap();
+    });
     assert!(storage.get_document("doc1.txt").unwrap().is_none());
     assert_eq!(storage.list_documents().unwrap().len(), 1);
   }
@@ -448,16 +513,19 @@ mod tests {
     storage.init().unwrap();
 
     let doc = make_doc("doc1.txt", "hello world");
-    storage.add_document(&doc).unwrap();
-
     let c1 = make_chunk("c1", "doc1.txt", "hello", 0, 5);
     let c2 = make_chunk("c2", "doc1.txt", "world", 6, 11);
-    storage.add_chunks(&[c1, c2]).unwrap();
+    commit(&storage, |tx| {
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&[c1, c2]).unwrap();
+    });
 
     let got = storage.get_chunks(&["c1".to_string(), "c2".to_string()]).unwrap();
     assert_eq!(got.len(), 2);
 
-    storage.delete_chunks_by_doc("doc1.txt").unwrap();
+    commit(&storage, |tx| {
+      tx.delete_chunks_by_doc("doc1.txt").unwrap();
+    });
     let gone = storage.get_chunks(&["c1".to_string()]).unwrap();
     assert!(gone.is_empty());
   }
@@ -476,7 +544,9 @@ mod tests {
       revision: "main".into(),
       checksum: Some("abc123".into()),
     };
-    storage.set_model_version("embedding", &spec).unwrap();
+    commit(&storage, |tx| {
+      tx.set_model_version("embedding", &spec).unwrap();
+    });
 
     let got = storage.get_model_version("embedding").unwrap().unwrap();
     assert_eq!(got.repo_id, "BAAI/bge-small-zh-v1.5");
@@ -489,23 +559,25 @@ mod tests {
     storage.init().unwrap();
 
     let doc = make_doc("doc1.txt", "content");
-    storage.add_document(&doc).unwrap();
-
     let chunk = make_chunk("c0", "doc1.txt", "text", 0, 4);
-    storage.add_chunks(&[chunk]).unwrap();
 
     let base = vec![0.0_f32; 512];
     let mut vectors: Vec<Vec<f32>> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
+    let mut chunks = vec![chunk];
     for i in 0..10 {
       let mut v = base.clone();
       v[i] = 1.0;
       vectors.push(v);
       ids.push(format!("c{i}"));
       let ch = make_chunk(&format!("c{i}"), "doc1.txt", "text", i, i + 1);
-      storage.add_chunks(&[ch]).unwrap();
+      chunks.push(ch);
     }
-    storage.add_vectors(&ids, &vectors).unwrap();
+    commit(&storage, |tx| {
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&chunks).unwrap();
+      tx.add_vectors(&ids, &vectors).unwrap();
+    });
 
     let mut query = vec![0.0_f32; 512];
     query[3] = 1.0;
@@ -521,18 +593,20 @@ mod tests {
     storage.init().unwrap();
 
     let doc = make_doc("doc1.txt", "content");
-    storage.add_document(&doc).unwrap();
-
     let chunks = vec![
       ("c1", "分布式 共识 算法 解决 多个 节点 达成 一致 的 问题"),
       ("c2", "Raft 是 一种 易于 理解 的 共识 算法"),
       ("c3", "今天 天气 不错"),
     ];
-    for (id, text, _) in chunks.iter().map(|(id, text)| (id, text, 0)) {
-      let ch = make_chunk(id, "doc1.txt", text, 0, text.len());
-      storage.add_chunks(&[ch]).unwrap();
-      storage.add_fts_chunks(&[id.to_string()], &[text.to_string()]).unwrap();
-    }
+    let chunk_objs: Vec<Chunk> =
+      chunks.iter().map(|(id, text)| make_chunk(id, "doc1.txt", text, 0, text.len())).collect();
+    let ids: Vec<String> = chunks.iter().map(|(id, _)| id.to_string()).collect();
+    let texts: Vec<String> = chunks.iter().map(|(_, text)| text.to_string()).collect();
+    commit(&storage, |tx| {
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&chunk_objs).unwrap();
+      tx.add_fts_chunks(&ids, &texts).unwrap();
+    });
 
     let hits = storage.search_text("共识 算法", 10).unwrap();
     assert_eq!(hits.len(), 2);
@@ -540,5 +614,74 @@ mod tests {
     assert!(ids.contains(&"c1"));
     assert!(ids.contains(&"c2"));
     assert!(!ids.contains(&"c3"));
+  }
+
+  #[test]
+  fn test_transaction_commit() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.init().unwrap();
+
+    let doc = make_doc("doc1.txt", "content");
+    let chunk = make_chunk("c1", "doc1.txt", "hello", 0, 5);
+    let tokenized = "hello".to_string();
+    let embedding = vec![0.1_f32; 512];
+
+    {
+      let mut tx = storage.begin_tx().unwrap();
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&[chunk.clone()]).unwrap();
+      tx.add_vectors(&["c1".to_string()], &[embedding.clone()]).unwrap();
+      tx.add_fts_chunks(&["c1".to_string()], &[tokenized.clone()]).unwrap();
+      tx.commit().unwrap();
+    }
+
+    assert!(storage.get_document("doc1.txt").unwrap().is_some());
+    assert_eq!(storage.get_chunks(&["c1".to_string()]).unwrap().len(), 1);
+    let hits = storage.search_vectors(&embedding, 1).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].0, "c1");
+    assert_eq!(storage.search_text("hello", 10).unwrap().len(), 1);
+  }
+
+  #[test]
+  fn test_transaction_rollback_on_drop() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.init().unwrap();
+
+    let doc = make_doc("doc1.txt", "content");
+
+    {
+      let mut tx = storage.begin_tx().unwrap();
+      tx.add_document(&doc).unwrap();
+    }
+
+    assert!(
+      storage.get_document("doc1.txt").unwrap().is_none(),
+      "doc must not persist without commit"
+    );
+  }
+
+  #[test]
+  fn test_transaction_commit_after_failure() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.init().unwrap();
+
+    let doc = make_doc("doc1.txt", "content");
+    let chunk = make_chunk("c1", "doc1.txt", "hello", 0, 5);
+
+    let result = {
+      let mut tx = storage.begin_tx().unwrap();
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&[chunk]).unwrap();
+      tx.add_vectors(&["c1".to_string(), "c2".to_string()], &[vec![0.0_f32; 512]]).unwrap_err();
+      Err::<(), _>(StoreError::Other("forced".into()))
+    };
+    assert!(result.is_err());
+
+    assert!(
+      storage.get_document("doc1.txt").unwrap().is_none(),
+      "partial writes must be rolled back"
+    );
+    assert!(storage.get_chunks(&["c1".to_string()]).unwrap().is_empty());
   }
 }

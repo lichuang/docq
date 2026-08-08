@@ -25,7 +25,7 @@
 | **P0** | ~~技术验证~~（已完成） | 0 天 | 无 | ✅ 已完成 |
 | **P1** | Workspace + Core 类型/trait | 3~4 天 | 无 | ✅ 已完成 |
 | **P2** | Storage trait + SQLite 基础 | 3~4 天 | P1 | ✅ 已完成（不含 InMemoryStorage，已移除） |
-| **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 | ⬜ 未完成 |
+| **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 | ✅ 已完成 |
 | **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ⬜ 未完成 |
 | **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ⬜ 未完成 |
 | **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ⬜ 未完成 |
@@ -441,7 +441,7 @@ fn test_chunk_crud() {
 
 ---
 
-## P3：sqlite-vec + FTS5 ⬜（P3.1 + P3.2 已完成，P3.3 待做）
+## P3：sqlite-vec + FTS5 ✅
 
 ### 目标
 
@@ -486,7 +486,7 @@ fn test_chunk_crud() {
 
 **注意：** `chunks.text` 存原始文本，`fts_chunks.text` 存 jieba 分词后空格拼接文本。
 
-#### P3.3 事务一致性 ⬜
+#### P3.3 事务一致性 ✅
 
 **要求：**
 
