@@ -24,8 +24,8 @@ See the overview table at the top of `docs/phase.md` (each phase has ✅ / ⬜).
 | P3.1 sqlite-vec integration | ✅ done |
 | P3.2 FTS5 integration | ✅ done |
 | P3.3 Transactional consistency (StorageTx) | ✅ done |
-| P5 Embedder + 文本读取 | ✅ done |
-| P6–P13 | ⬜ pending |
+| P6 Chunker + Indexer 流程 | ✅ done |
+| P7–P13 | ⬜ pending |
 
 ## Common commands
 

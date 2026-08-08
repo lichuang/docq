@@ -33,6 +33,10 @@ pub trait Chunker: Send + Sync {
   fn chunk(&self, text: &str) -> Vec<ChunkCandidate>;
 }
 
+pub trait WordSegmenter: Send + Sync {
+  fn segment(&self, text: &str) -> String;
+}
+
 pub trait Storage: Send + Sync {
   fn init(&self) -> Result<()>;
 

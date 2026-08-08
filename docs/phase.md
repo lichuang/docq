@@ -28,7 +28,7 @@
 | **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 | ✅ 已完成 |
 | **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ✅ 已完成 |
 | **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ✅ 已完成 |
-| **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ⬜ 未完成 |
+| **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ✅ 已完成 |
 | **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ⬜ 未完成 |
 | **P8** | Reranker | 2~3 天 | P7 | ⬜ 未完成 |
 | **P9** | LLM 后端 | 3~4 天 | P1 | ⬜ 未完成 |
@@ -678,7 +678,7 @@ fn test_reader() {
 
 ---
 
-## P6：Chunker + Indexer 流程 ⬜
+## P6：Chunker + Indexer 流程 ✅
 
 ### 目标
 
@@ -686,7 +686,7 @@ fn test_reader() {
 
 ### 任务
 
-#### P6.1 SentenceSplitter
+#### P6.1 SentenceSplitter ✅
 
 **文件：** `crates/docq-indexer/src/chunker.rs`
 
@@ -694,14 +694,13 @@ fn test_reader() {
 
 ```rust
 pub struct SentenceSplitter {
-    pub chunk_size: usize,
-    pub chunk_overlap: usize,
+    tokenizer: Tokenizer,
+    chunk_size: usize,
+    chunk_overlap: usize,
 }
 
-impl Default for SentenceSplitter {
-    fn default() -> Self {
-        Self { chunk_size: 2048, chunk_overlap: 200 }
-    }
+impl SentenceSplitter {
+    pub fn new(tokenizer: Tokenizer, chunk_size: usize, chunk_overlap: usize) -> Self;
 }
 
 impl Chunker for SentenceSplitter {
@@ -715,7 +714,7 @@ impl Chunker for SentenceSplitter {
 - 相邻 chunk 保留 `chunk_overlap` tokens
 - 记录每个 chunk 在原始文件中的字节范围
 
-#### P6.2 jieba 分词辅助函数
+#### P6.2 jieba 分词辅助函数 ✅
 
 **文件：** `crates/docq-indexer/src/tokenizer.rs`
 
@@ -728,7 +727,7 @@ pub fn jieba_tokenize(text: &str) -> String;
 - 用 `jieba-rs` 分词
 - 用空格连接 tokens
 
-#### P6.3 Indexer
+#### P6.3 Indexer ✅
 
 **文件：** `crates/docq-indexer/src/lib.rs`
 

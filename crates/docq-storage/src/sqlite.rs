@@ -114,6 +114,14 @@ fn delete_document(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
 }
 
 fn delete_chunks_by_doc(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
+  conn.execute(
+    "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?1)",
+    params![doc_id],
+  )?;
+  conn.execute(
+    "DELETE FROM fts_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?1)",
+    params![doc_id],
+  )?;
   conn.execute("DELETE FROM chunks WHERE doc_id = ?1", params![doc_id])?;
   Ok(())
 }
@@ -528,6 +536,35 @@ mod tests {
     });
     let gone = storage.get_chunks(&["c1".to_string()]).unwrap();
     assert!(gone.is_empty());
+  }
+
+  #[test]
+  fn test_delete_chunks_cascades_vectors_and_fts() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.init().unwrap();
+
+    let doc = make_doc("doc1.txt", "content");
+    let chunk = make_chunk("c1", "doc1.txt", "hello", 0, 5);
+    let embedding = vec![0.1_f32; 512];
+    let tokenized = "hello".to_string();
+
+    commit(&storage, |tx| {
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&[chunk]).unwrap();
+      tx.add_vectors(&["c1".to_string()], &[embedding]).unwrap();
+      tx.add_fts_chunks(&["c1".to_string()], &[tokenized]).unwrap();
+    });
+
+    assert!(!storage.search_vectors(&vec![0.1_f32; 512], 10).unwrap().is_empty());
+    assert!(!storage.search_text("hello", 10).unwrap().is_empty());
+
+    commit(&storage, |tx| {
+      tx.delete_chunks_by_doc("doc1.txt").unwrap();
+    });
+
+    assert!(storage.get_chunks(&["c1".to_string()]).unwrap().is_empty());
+    assert!(storage.search_vectors(&vec![0.1_f32; 512], 10).unwrap().is_empty());
+    assert!(storage.search_text("hello", 10).unwrap().is_empty());
   }
 
   #[test]
