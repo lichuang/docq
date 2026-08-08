@@ -666,10 +666,13 @@ dependencies = [
  "docq-core",
  "docq-model",
  "docq-storage",
+ "glob",
  "jieba-rs",
+ "tempfile",
  "thiserror 1.0.69",
  "tokenizers 0.20.4",
  "tokio",
+ "walkdir",
 ]
 
 [[package]]

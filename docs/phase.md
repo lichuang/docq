@@ -27,7 +27,7 @@
 | **P2** | Storage trait + SQLite 基础 | 3~4 天 | P1 | ✅ 已完成（不含 InMemoryStorage，已移除） |
 | **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 | ✅ 已完成 |
 | **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ✅ 已完成 |
-| **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ⬜ 未完成 |
+| **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ✅ 已完成 |
 | **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ⬜ 未完成 |
 | **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ⬜ 未完成 |
 | **P8** | Reranker | 2~3 天 | P7 | ⬜ 未完成 |
@@ -593,7 +593,7 @@ async fn test_hub_ensure() {
 
 ---
 
-## P5：Embedder + 文本读取 ⬜
+## P5：Embedder + 文本读取 ✅
 
 ### 目标
 
@@ -601,7 +601,7 @@ async fn test_hub_ensure() {
 
 ### 任务
 
-#### P5.1 FastEmbedEmbedder
+#### P5.1 FastEmbedEmbedder ✅
 
 **文件：** `crates/docq-model/src/embed.rs`
 
@@ -627,7 +627,7 @@ impl Embedder for FastEmbedEmbedder {
 - 使用 `fastembed` 加载 `BAAI/bge-small-zh-v1.5`
 - batch inference
 
-#### P5.2 文本读取器
+#### P5.2 文本读取器 ✅
 
 **文件：** `crates/docq-indexer/src/reader.rs`
 

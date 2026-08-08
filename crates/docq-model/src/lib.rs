@@ -1,15 +1,17 @@
 //! Model registry, download/cache, and inference backends.
 
+pub mod embed;
 pub mod hub;
 pub mod registry;
 
+pub use embed::FastEmbedEmbedder;
 pub use hub::ModelHub;
 pub use registry::ModelRegistry;
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use docq_core::{ModelSpec, Storage};
+  use docq_core::{Embedder, ModelSpec, Storage};
   use docq_storage::SqliteStorage;
   use std::fs;
   use tempfile::TempDir;
@@ -72,5 +74,22 @@ mod tests {
     let spec = ModelRegistry::default_embedding();
     let path = hub.ensure(&spec, &storage).await.unwrap();
     assert!(path.exists());
+  }
+
+  #[tokio::test]
+  #[ignore = "requires network; run with cargo test -- --ignored"]
+  async fn test_embedder_embed() {
+    let tmp = TempDir::new().unwrap();
+    let hub = ModelHub::new(tmp.path().to_path_buf());
+    let spec = ModelRegistry::default_embedding();
+
+    let embedder = FastEmbedEmbedder::from_model_hub(&hub, &spec).await.unwrap();
+    assert_eq!(embedder.dimension(), 512);
+    assert_eq!(embedder.model_name(), "BAAI/bge-small-zh-v1.5");
+
+    let texts = vec!["你好".to_string(), "世界".to_string()];
+    let embs = embedder.embed(&texts).await.unwrap();
+    assert_eq!(embs.len(), 2);
+    assert_eq!(embs[0].len(), 512);
   }
 }
