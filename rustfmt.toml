@@ -1,0 +1,8 @@
+# Stable rustfmt options only.
+# This project pins Rust 1.95.0 (stable), so unstable/nightly options are excluded.
+
+max_width       = 120
+chain_width     = 100
+tab_spaces      = 2
+reorder_imports = true
+merge_derives   = false
