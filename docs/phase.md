@@ -20,22 +20,22 @@
 
 ## 总览
 
-| 阶段 | 目标 | 预计时间 | 前置依赖 |
-|---|---|---|---|
-| **P0** | ~~技术验证~~（已完成） | 0 天 | 无 |
-| **P1** | Workspace + Core 类型/trait | 3~4 天 | 无 |
-| **P2** | Storage trait + SQLite 基础 | 3~4 天 | P1 |
-| **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 |
-| **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 |
-| **P5** | Embedder + 文本读取 | 3~4 天 | P4 |
-| **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 |
-| **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 |
-| **P8** | Reranker | 2~3 天 | P7 |
-| **P9** | LLM 后端 | 3~4 天 | P1 |
-| **P10** | Ask / Synthesis | 3~4 天 | P8, P9 |
-| **P11** | Engine Facade | 2~3 天 | P10 |
-| **P12** | CLI | 3~4 天 | P11 |
-| **P13** | 集成测试 + 打磨 | 5~7 天 | P12 |
+| 阶段 | 目标 | 预计时间 | 前置依赖 | 状态 |
+|---|---|---|---|---|
+| **P0** | ~~技术验证~~（已完成） | 0 天 | 无 | ✅ 已完成 |
+| **P1** | Workspace + Core 类型/trait | 3~4 天 | 无 | ✅ 已完成 |
+| **P2** | Storage trait + SQLite 基础 | 3~4 天 | P1 | ✅ 已完成（不含 InMemoryStorage，已移除） |
+| **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 | ⬜ 未完成 |
+| **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ⬜ 未完成 |
+| **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ⬜ 未完成 |
+| **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ⬜ 未完成 |
+| **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ⬜ 未完成 |
+| **P8** | Reranker | 2~3 天 | P7 | ⬜ 未完成 |
+| **P9** | LLM 后端 | 3~4 天 | P1 | ⬜ 未完成 |
+| **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ⬜ 未完成 |
+| **P11** | Engine Facade | 2~3 天 | P10 | ⬜ 未完成 |
+| **P12** | CLI | 3~4 天 | P11 | ⬜ 未完成 |
+| **P13** | 集成测试 + 打磨 | 5~7 天 | P12 | ⬜ 未完成 |
 
 **总预计：9 ~ 13 周**（已扣除 P0 的 3~5 天）
 
@@ -152,7 +152,7 @@ assert!(sim("今天是我的生日", "Rust 的所有权机制") < 0.5);
 
 ---
 
-## P1：Workspace + Core 类型/trait
+## P1：Workspace + Core 类型/trait ✅
 
 ### 目标
 
@@ -160,7 +160,7 @@ assert!(sim("今天是我的生日", "Rust 的所有权机制") < 0.5);
 
 ### 任务
 
-#### P1.1 创建 Workspace
+#### P1.1 创建 Workspace ✅
 
 **文件：**
 
@@ -191,7 +191,7 @@ assert!(sim("今天是我的生日", "Rust 的所有权机制") < 0.5);
   ```
 - `cargo build` 在所有 crate 上通过（无代码时也应通过）。
 
-#### P1.2 定义错误类型
+#### P1.2 定义错误类型 ✅
 
 **文件：** `crates/docq-core/src/error.rs`
 
@@ -213,7 +213,7 @@ pub type Result<T> = std::result::Result<T, DocqError>;
 
 每个子错误 enum 至少包含一个 `Other(String)` 变体便于开发期使用。
 
-#### P1.3 定义核心数据类型
+#### P1.3 定义核心数据类型 ✅
 
 **文件：** `crates/docq-core/src/models.rs`
 
@@ -275,7 +275,7 @@ pub struct ModelSpec {
 
 所有类型实现 `Debug` + `Clone`；需要序列化的实现 `Serialize`/`Deserialize`。
 
-#### P1.4 定义核心 trait
+#### P1.4 定义核心 trait ✅
 
 **文件：** `crates/docq-core/src/traits.rs`
 
@@ -325,7 +325,7 @@ pub trait Storage: Send + Sync {
 }
 ```
 
-#### P1.5 `docq-core` 导出
+#### P1.5 `docq-core` 导出 ✅
 
 **文件：** `crates/docq-core/src/lib.rs`
 
@@ -349,7 +349,7 @@ pub use traits::*;
 
 ---
 
-## P2：Storage trait + SQLite 基础
+## P2：Storage trait + SQLite 基础 ✅
 
 ### 目标
 
@@ -357,7 +357,7 @@ pub use traits::*;
 
 ### 任务
 
-#### P2.1 创建 `SqliteStorage`
+#### P2.1 创建 `SqliteStorage` ✅
 
 **文件：** `crates/docq-storage/src/lib.rs`、`crates/docq-storage/src/sqlite.rs`
 
@@ -378,7 +378,7 @@ impl Storage for SqliteStorage {
 }
 ```
 
-#### P2.2 Schema 初始化
+#### P2.2 Schema 初始化 ✅
 
 **要求：** `Storage::init()` 创建以下表：
 
@@ -409,7 +409,7 @@ CREATE TABLE model_versions (
 );
 ```
 
-#### P2.3 实现 documents / chunks CRUD
+#### P2.3 实现 documents / chunks CRUD ✅
 
 **要求：**
 
@@ -417,16 +417,6 @@ CREATE TABLE model_versions (
 - `add_chunks` / `get_chunks` / `delete_chunks_by_doc`
 - 所有操作通过 `rusqlite` 执行
 - 使用事务保证 `add_chunks` 批量写入原子性
-
-#### P2.4 创建 `InMemoryStorage`
-
-**文件：** `crates/docq-storage/src/memory.rs`
-
-**要求：**
-
-- 用 `HashMap` 实现 `Storage`
-- 仅用于测试
-- 实现所有 `Storage` trait 方法
 
 ### 验收标准
 
@@ -447,10 +437,11 @@ fn test_chunk_crud() {
 ```
 
 - `cargo test -p docq-storage` 全部通过。
+- 不再实现 `InMemoryStorage`：后续 indexer / retrieve / synth 的测试统一使用 `SqliteStorage::open_in_memory()`（SQLite `:memory:` 模式），避免维护两份 `Storage` 实现。
 
 ---
 
-## P3：sqlite-vec + FTS5
+## P3：sqlite-vec + FTS5 ⬜
 
 ### 目标
 
@@ -527,7 +518,7 @@ fn test_text_search() {
 
 ---
 
-## P4：ModelHub（下载/缓存/注册表）
+## P4：ModelHub（下载/缓存/注册表） ⬜
 
 ### 目标
 
@@ -602,7 +593,7 @@ async fn test_hub_ensure() {
 
 ---
 
-## P5：Embedder + 文本读取
+## P5：Embedder + 文本读取 ⬜
 
 ### 目标
 
@@ -687,7 +678,7 @@ fn test_reader() {
 
 ---
 
-## P6：Chunker + Indexer 流程
+## P6：Chunker + Indexer 流程 ⬜
 
 ### 目标
 
@@ -791,7 +782,7 @@ async fn test_index_and_search() {
 
 ---
 
-## P7：BM25 + 向量召回 + RRF
+## P7：BM25 + 向量召回 + RRF ⬜
 
 ### 目标
 
@@ -871,7 +862,7 @@ async fn test_hybrid_search() {
 
 ---
 
-## P8：Reranker
+## P8：Reranker ⬜
 
 ### 目标
 
@@ -924,7 +915,7 @@ async fn test_rerank() {
 
 ---
 
-## P9：LLM 后端
+## P9：LLM 后端 ⬜
 
 ### 目标
 
@@ -978,7 +969,7 @@ async fn test_llm_complete() {
 
 ---
 
-## P10：Ask / Synthesis
+## P10：Ask / Synthesis ⬜
 
 ### 目标
 
@@ -1071,7 +1062,7 @@ async fn test_ask() {
 
 ---
 
-## P11：Engine Facade
+## P11：Engine Facade ⬜
 
 ### 目标
 
@@ -1138,7 +1129,7 @@ async fn test_engine_end_to_end() {
 
 ---
 
-## P12：CLI
+## P12：CLI ⬜
 
 ### 目标
 
@@ -1202,7 +1193,7 @@ docq ask "我的生日是哪一天？" --json | jq '.answer'         # 应非空
 
 ---
 
-## P13：集成测试 + 打磨
+## P13：集成测试 + 打磨 ⬜
 
 ### 目标
 

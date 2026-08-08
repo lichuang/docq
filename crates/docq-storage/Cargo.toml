@@ -10,3 +10,4 @@ thiserror = { workspace = true }
 rusqlite = { workspace = true }
 sqlite-vec = { workspace = true }
 jieba-rs = { workspace = true }
+chrono = { workspace = true }
