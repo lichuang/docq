@@ -1,0 +1,13 @@
+[package]
+name = "docq-synth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+docq-core = { workspace = true }
+docq-model = { workspace = true, features = ["llm"] }
+docq-retrieve = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }

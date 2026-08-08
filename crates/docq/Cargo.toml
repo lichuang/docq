@@ -1,0 +1,16 @@
+[package]
+name = "docq"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+docq-core = { workspace = true }
+docq-model = { workspace = true }
+docq-indexer = { workspace = true }
+docq-storage = { workspace = true }
+docq-retrieve = { workspace = true }
+docq-synth = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }

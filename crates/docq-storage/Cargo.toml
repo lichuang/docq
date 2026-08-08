@@ -1,0 +1,12 @@
+[package]
+name = "docq-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+docq-core = { workspace = true }
+thiserror = { workspace = true }
+rusqlite = { workspace = true }
+sqlite-vec = { workspace = true }
+jieba-rs = { workspace = true }

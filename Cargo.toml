@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/docq-core",
+    "crates/docq-model",
+    "crates/docq-indexer",
+    "crates/docq-storage",
+    "crates/docq-retrieve",
+    "crates/docq-synth",
+    "crates/docq",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+
+[workspace.dependencies]
+async-trait = "0.1"
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+jieba-rs = "0.7"
+tokenizers = "0.20"
+fastembed = "5"
+llama-cpp-2 = "0.1"
+hf-hub = "0.3"
+rusqlite = { version = "0.40", features = ["bundled"] }
+sqlite-vec = "0.1"
+docq-core = { path = "crates/docq-core" }
+docq-model = { path = "crates/docq-model" }
+docq-indexer = { path = "crates/docq-indexer" }
+docq-storage = { path = "crates/docq-storage" }
+docq-retrieve = { path = "crates/docq-retrieve" }
+docq-synth = { path = "crates/docq-synth" }
