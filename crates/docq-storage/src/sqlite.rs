@@ -13,7 +13,14 @@ static VEC_EXT_LOADED: Once = Once::new();
 
 fn ensure_vec_extension() {
   VEC_EXT_LOADED.call_once(|| unsafe {
-    sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
+    sqlite3_auto_extension(Some(std::mem::transmute::<
+      *const (),
+      unsafe extern "C" fn(
+        *mut rusqlite::ffi::sqlite3,
+        *mut *mut i8,
+        *const rusqlite::ffi::sqlite3_api_routines,
+      ) -> i32,
+    >(sqlite3_vec_init as *const ())));
   });
 }
 
@@ -273,7 +280,7 @@ impl Storage for SqliteStorage {
       return Err(StoreError::Other("chunk_ids and embeddings length mismatch".into()).into());
     }
     let conn = self.conn.lock().map_err(|_| poisoned())?;
-let mut stmt = conn
+    let mut stmt = conn
       .prepare("INSERT OR REPLACE INTO vec_chunks (chunk_id, embedding) VALUES (?1, ?2)")
       .map_err(map_rusqlite)?;
     for (id, emb) in chunk_ids.iter().zip(embeddings.iter()) {
@@ -309,7 +316,9 @@ let mut stmt = conn
       return Err(StoreError::Other("chunk_ids and tokenized_texts length mismatch".into()).into());
     }
     let conn = self.conn.lock().map_err(|_| poisoned())?;
-    let mut stmt = conn.prepare("INSERT OR REPLACE INTO fts_chunks (chunk_id, text) VALUES (?1, ?2)").map_err(map_rusqlite)?;
+    let mut stmt = conn
+      .prepare("INSERT OR REPLACE INTO fts_chunks (chunk_id, text) VALUES (?1, ?2)")
+      .map_err(map_rusqlite)?;
     for (id, text) in chunk_ids.iter().zip(tokenized_texts.iter()) {
       stmt.execute(params![id, text]).map_err(map_rusqlite)?;
     }
