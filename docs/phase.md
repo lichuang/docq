@@ -26,7 +26,7 @@
 | **P1** | Workspace + Core 类型/trait | 3~4 天 | 无 | ✅ 已完成 |
 | **P2** | Storage trait + SQLite 基础 | 3~4 天 | P1 | ✅ 已完成（不含 InMemoryStorage，已移除） |
 | **P3** | sqlite-vec + FTS5 | 3~4 天 | P2 | ✅ 已完成 |
-| **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ⬜ 未完成 |
+| **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ✅ 已完成 |
 | **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ⬜ 未完成 |
 | **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ⬜ 未完成 |
 | **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ⬜ 未完成 |
@@ -518,7 +518,7 @@ fn test_text_search() {
 
 ---
 
-## P4：ModelHub（下载/缓存/注册表） ⬜
+## P4：ModelHub（下载/缓存/注册表） ✅
 
 ### 目标
 
@@ -526,7 +526,7 @@ fn test_text_search() {
 
 ### 任务
 
-#### P4.1 默认模型配置
+#### P4.1 默认模型配置 ✅
 
 **文件：** `crates/docq-model/src/registry.rs`
 
@@ -548,7 +548,7 @@ impl ModelRegistry {
 - reranker: `BAAI/bge-reranker-base`
 - llm: `Qwen/Qwen2.5-7B-Instruct-GGUF`
 
-#### P4.2 ModelHub
+#### P4.2 ModelHub ✅
 
 **文件：** `crates/docq-model/src/hub.rs`
 
@@ -569,7 +569,7 @@ impl ModelHub {
 - 不存在则使用 `hf-hub` 下载
 - 返回本地文件路径
 
-#### P4.3 模型版本记录
+#### P4.3 模型版本记录 ✅
 
 **要求：**
 

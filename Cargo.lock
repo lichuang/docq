@@ -678,9 +678,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "docq-core",
+ "docq-storage",
  "fastembed",
  "hf-hub 0.3.2",
  "llama-cpp-2",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
 ]
