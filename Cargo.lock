@@ -703,7 +703,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "docq-core",
- "jieba-rs",
  "rusqlite",
  "sqlite-vec",
  "thiserror 1.0.69",

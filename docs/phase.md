@@ -441,7 +441,7 @@ fn test_chunk_crud() {
 
 ---
 
-## P3：sqlite-vec + FTS5 ⬜
+## P3：sqlite-vec + FTS5 ⬜（P3.1 + P3.2 已完成，P3.3 待做）
 
 ### 目标
 
@@ -449,7 +449,7 @@ fn test_chunk_crud() {
 
 ### 任务
 
-#### P3.1 集成 sqlite-vec
+#### P3.1 集成 sqlite-vec ✅
 
 **文件：** `crates/docq-storage/src/sqlite.rs`
 
@@ -467,7 +467,7 @@ fn test_chunk_crud() {
 4. 实现 `Storage::add_vectors`。
 5. 实现 `Storage::search_vectors`。
 
-#### P3.2 集成 FTS5
+#### P3.2 集成 FTS5 ✅
 
 **文件：** `crates/docq-storage/src/sqlite.rs`
 
@@ -486,7 +486,7 @@ fn test_chunk_crud() {
 
 **注意：** `chunks.text` 存原始文本，`fts_chunks.text` 存 jieba 分词后空格拼接文本。
 
-#### P3.3 事务一致性
+#### P3.3 事务一致性 ⬜
 
 **要求：**
 

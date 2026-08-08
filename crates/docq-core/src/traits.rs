@@ -56,6 +56,7 @@ pub trait Storage: Send + Sync {
 
   // ---- full-text search ----
 
+  fn add_fts_chunks(&self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()>;
   fn search_text(&self, query: &str, top_k: usize) -> Result<Vec<(String, f32)>>;
 
   // ---- model versions ----
