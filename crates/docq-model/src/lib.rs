@@ -1,11 +1,13 @@
 //! Model registry, download/cache, and inference backends.
 
 pub mod embed;
+pub mod gguf;
 pub mod hub;
 pub mod registry;
 pub mod rerank;
 
 pub use embed::FastEmbedEmbedder;
+pub use gguf::GgufLlm;
 pub use hub::ModelHub;
 pub use registry::ModelRegistry;
 pub use registry::{

@@ -18,6 +18,14 @@ impl ModelHub {
   }
 
   pub async fn ensure(&self, spec: &ModelSpec, storage: &dyn Storage) -> Result<PathBuf> {
+    let path = self.resolve(spec).await?;
+    let mut tx = storage.begin_tx()?;
+    tx.set_model_version(&spec.role, spec)?;
+    tx.commit()?;
+    Ok(path)
+  }
+
+  pub async fn resolve(&self, spec: &ModelSpec) -> Result<PathBuf> {
     let api = ApiBuilder::new()
       .with_cache_dir(self.cache_dir.clone())
       .with_progress(false)
@@ -25,12 +33,6 @@ impl ModelHub {
       .map_err(|e| ModelError::Other(e.to_string()))?;
 
     let repo = Repo::with_revision(spec.repo_id.clone(), RepoType::Model, spec.revision.clone());
-    let path = api.repo(repo).get(&spec.filename).map_err(|e| ModelError::Other(e.to_string()))?;
-
-    let mut tx = storage.begin_tx()?;
-    tx.set_model_version(&spec.role, spec)?;
-    tx.commit()?;
-
-    Ok(path)
+    api.repo(repo).get(&spec.filename).map_err(|e| ModelError::Other(e.to_string())).map_err(Into::into)
   }
 }

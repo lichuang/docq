@@ -31,7 +31,7 @@
 | **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ✅ 已完成 |
 | **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ✅ 已完成 |
 | **P8** | Reranker | 2~3 天 | P7 | ✅ 已完成 |
-| **P9** | LLM 后端 | 3~4 天 | P1 | ⬜ 未完成 |
+| **P9** | LLM 后端 | 3~4 天 | P1 | ✅ 已完成 |
 | **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ⬜ 未完成 |
 | **P11** | Engine Facade | 2~3 天 | P10 | ⬜ 未完成 |
 | **P12** | CLI | 3~4 天 | P11 | ⬜ 未完成 |
@@ -915,7 +915,7 @@ async fn test_rerank() {
 
 ---
 
-## P9：LLM 后端 ⬜
+## P9：LLM 后端 ✅
 
 ### 目标
 
@@ -923,7 +923,7 @@ async fn test_rerank() {
 
 ### 任务
 
-#### P9.1 LlamaLlm
+#### P9.1 LlamaLlm ✅
 
 **文件：** `crates/docq-model/src/llm.rs`
 
@@ -947,7 +947,7 @@ impl LLM for LlamaLlm {
 - 使用 chat template
 - 默认参数：n_ctx=4096，temp=0.7，top_p=0.9，max_tokens=512
 
-#### P9.2 Prompt-only 模式（可选）
+#### P9.2 Prompt-only 模式（可选） ✅
 
 **要求：**
 

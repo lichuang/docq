@@ -76,3 +76,24 @@ pub struct ModelSpec {
   pub revision: String,
   pub checksum: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+  pub n_ctx: u32,
+  pub temperature: f32,
+  pub top_p: f32,
+  pub max_tokens: usize,
+  pub seed: u32,
+}
+
+impl Default for LlmConfig {
+  fn default() -> Self {
+    Self {
+      n_ctx: 4096,
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 512,
+      seed: 0,
+    }
+  }
+}
