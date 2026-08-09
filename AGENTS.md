@@ -109,6 +109,7 @@ cargo clippy --all-features -- -D warnings
 - Async traits use `#[async_trait]`.
 - Public APIs get short rustdoc (one-line `//!` module description + field comments only for non-obvious conventions, e.g. "SHA-256 of `text`", "RFC3339 UTC").
 - **Never** use type-erasure shims like `as any` / `@ts-ignore` (TS concepts). The Rust equivalents are `unimplemented!()` / `todo!()` — only allowed in stub methods that are clearly annotated "to be implemented in P3", and must be removed before commit.
+- **No deep-path references in code**: types like `docq_core::EmbedError::Other` must be flattened to `EmbedError::Other` via `use` at the top of the file. Never nest more than two `::` levels inline — import the item and use the short name. This keeps lines short and makes dependencies explicit at the file top.
 
 ## Commit conventions
 

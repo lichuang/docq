@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use docq_core::{Chunk, ModelError, ModelSpec, Reranker, Result, ScoredChunk};
+use docq_core::{Chunk, ModelError, ModelSpec, Reranker, Result, RetrieveError, ScoredChunk};
 use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
 
 use crate::{
@@ -43,10 +43,10 @@ fn reranker_model_for(repo_id: &str) -> Result<RerankerModel> {
 impl Reranker for FastEmbedReranker {
   async fn rerank(&self, query: &str, chunks: &[Chunk]) -> Result<Vec<ScoredChunk>> {
     let documents: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-    let mut inner = self.inner.lock().map_err(|_| docq_core::RetrieveError::Other("mutex poisoned".into()))?;
+    let mut inner = self.inner.lock().map_err(|_| RetrieveError::Other("mutex poisoned".into()))?;
     let results = inner
       .rerank(query.to_string(), &documents, false, None)
-      .map_err(|e| docq_core::RetrieveError::Other(e.to_string()))?;
+      .map_err(|e| RetrieveError::Other(e.to_string()))?;
 
     let scored = results
       .into_iter()

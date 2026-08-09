@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use docq_core::{Chunk, Chunker, Document, Embedder, Result, Storage, WordSegmenter};
+use docq_core::{Chunk, Chunker, Document, Embedder, ParseError, Result, Storage, WordSegmenter};
 use sha2::{Digest, Sha256};
 
 pub struct IndexerConfig {
@@ -48,8 +48,7 @@ impl Indexer {
   }
 
   pub async fn index_file(&self, path: &Path) -> Result<IndexStats> {
-    let content =
-      std::fs::read_to_string(path).map_err(|e| docq_core::ParseError::Other(format!("{}: {e}", path.display())))?;
+    let content = std::fs::read_to_string(path).map_err(|e| ParseError::Other(format!("{}: {e}", path.display())))?;
     let content_hash = sha256_hex(&content);
     let doc_id = path.to_string_lossy().to_string();
 

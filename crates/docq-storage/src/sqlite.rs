@@ -462,7 +462,7 @@ impl Drop for SqliteTransaction {
 mod tests {
   use super::*;
   use chrono::Utc;
-  use docq_core::{Chunk, Document, Storage};
+  use docq_core::{Chunk, Document, Storage, StorageTx};
 
   fn make_doc(id: &str, content: &str) -> Document {
     Document {
@@ -483,7 +483,7 @@ mod tests {
     }
   }
 
-  fn commit<F: FnOnce(&mut dyn docq_core::StorageTx)>(storage: &SqliteStorage, body: F) {
+  fn commit<F: FnOnce(&mut dyn StorageTx)>(storage: &SqliteStorage, body: F) {
     let mut tx = storage.begin_tx().unwrap();
     body(&mut *tx);
     tx.commit().unwrap();

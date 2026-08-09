@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use docq_core::{Chunk, Embedder, Reranker, Result, ScoreExplain, ScoredChunk, SearchHit, Storage, WordSegmenter};
+use docq_core::{
+  Chunk, EmbedError, Embedder, Reranker, Result, ScoreExplain, ScoredChunk, SearchHit, Storage, WordSegmenter,
+};
 
 use crate::fusion;
 
@@ -63,7 +65,7 @@ impl Retriever {
       .await?
       .into_iter()
       .next()
-      .ok_or_else(|| docq_core::EmbedError::Other("empty embedding result".into()))?;
+      .ok_or_else(|| EmbedError::Other("empty embedding result".into()))?;
 
     let vector_raw = self.config.storage.search_vectors(&query_embedding, self.config.vector_top_k)?;
     let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
@@ -144,7 +146,7 @@ impl Retriever {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use docq_core::{Chunker, Embedder, Reranker, Result, ScoredChunk, Storage};
+  use docq_core::{ChunkCandidate, Chunker, Embedder, Reranker, Result, ScoredChunk, Storage};
   use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, TextReader};
   use docq_storage::SqliteStorage;
   use tempfile::TempDir;
@@ -179,11 +181,11 @@ mod tests {
   struct StubChunker;
 
   impl Chunker for StubChunker {
-    fn chunk(&self, text: &str) -> Vec<docq_core::ChunkCandidate> {
+    fn chunk(&self, text: &str) -> Vec<ChunkCandidate> {
       if text.trim().is_empty() {
         return Vec::new();
       }
-      vec![docq_core::ChunkCandidate {
+      vec![ChunkCandidate {
         text: text.to_string(),
         byte_range: 0..text.len(),
       }]
