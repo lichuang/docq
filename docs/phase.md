@@ -30,7 +30,7 @@
 | **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ✅ 已完成 |
 | **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ✅ 已完成 |
 | **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ✅ 已完成 |
-| **P8** | Reranker | 2~3 天 | P7 | ⬜ 未完成 |
+| **P8** | Reranker | 2~3 天 | P7 | ✅ 已完成 |
 | **P9** | LLM 后端 | 3~4 天 | P1 | ⬜ 未完成 |
 | **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ⬜ 未完成 |
 | **P11** | Engine Facade | 2~3 天 | P10 | ⬜ 未完成 |
@@ -862,7 +862,7 @@ async fn test_hybrid_search() {
 
 ---
 
-## P8：Reranker ⬜
+## P8：Reranker ✅
 
 ### 目标
 
@@ -870,7 +870,7 @@ async fn test_hybrid_search() {
 
 ### 任务
 
-#### P8.1 Reranker 实现
+#### P8.1 Reranker 实现 ✅
 
 **文件：** `crates/docq-model/src/rerank.rs`
 
@@ -890,7 +890,7 @@ impl Reranker for FastEmbedReranker {
 - 输入 `(query, chunk.text)` pairs
 - 输出按 relevance score 排序
 
-#### P8.2 集成到 Retriever
+#### P8.2 集成到 Retriever ✅
 
 **文件：** `crates/docq-retrieve/src/lib.rs`
 

@@ -3,10 +3,17 @@
 pub mod embed;
 pub mod hub;
 pub mod registry;
+pub mod rerank;
 
 pub use embed::FastEmbedEmbedder;
 pub use hub::ModelHub;
 pub use registry::ModelRegistry;
+pub use registry::{
+  EMBEDDING_FILE, EMBEDDING_REPO, EMBEDDING_REPO_BGE_LARGE_ZH, EMBEDDING_REPO_BGE_M3, LLM_FILE, LLM_REPO,
+  RERANKER_FILE, RERANKER_REPO, RERANKER_REPO_BGE_V2_M3, RERANKER_REPO_BGE_V2_M3_ALT, RERANKER_REPO_JINA_V1_TURBO_EN,
+  RERANKER_REPO_JINA_V2_MULTILINGUAL,
+};
+pub use rerank::FastEmbedReranker;
 
 #[cfg(test)]
 mod tests {
@@ -27,9 +34,11 @@ mod tests {
     let commit = "fakecommit";
     let snapshot_dir = repo_dir.join("snapshots").join(commit);
     let refs_dir = repo_dir.join("refs");
-    fs::create_dir_all(&snapshot_dir).unwrap();
+    let file_path = std::path::Path::new(&spec.filename);
+    let file_dir = snapshot_dir.join(file_path.parent().unwrap_or(std::path::Path::new("")));
+    fs::create_dir_all(&file_dir).unwrap();
     fs::create_dir_all(&refs_dir).unwrap();
-    fs::write(snapshot_dir.join(&spec.filename), content).unwrap();
+    fs::write(snapshot_dir.join(file_path), content).unwrap();
     fs::write(refs_dir.join(&spec.revision), commit).unwrap();
   }
 
@@ -37,7 +46,7 @@ mod tests {
   async fn test_registry_defaults() {
     let emb = ModelRegistry::default_embedding();
     assert_eq!(emb.role, "embedding");
-    assert_eq!(emb.repo_id, "BAAI/bge-small-zh-v1.5");
+    assert_eq!(emb.repo_id, EMBEDDING_REPO);
 
     let rnk = ModelRegistry::default_reranker();
     assert_eq!(rnk.role, "reranker");
@@ -85,7 +94,7 @@ mod tests {
 
     let embedder = FastEmbedEmbedder::from_model_hub(&hub, &spec).await.unwrap();
     assert_eq!(embedder.dimension(), 512);
-    assert_eq!(embedder.model_name(), "BAAI/bge-small-zh-v1.5");
+    assert_eq!(embedder.model_name(), EMBEDDING_REPO);
 
     let texts = vec!["你好".to_string(), "世界".to_string()];
     let embs = embedder.embed(&texts).await.unwrap();

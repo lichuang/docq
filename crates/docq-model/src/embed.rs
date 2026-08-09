@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use docq_core::{EmbedError, Embedder, ModelError, ModelSpec, Result};
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 
-use crate::ModelHub;
+use crate::{ModelHub, EMBEDDING_REPO, EMBEDDING_REPO_BGE_LARGE_ZH, EMBEDDING_REPO_BGE_M3};
 
 pub struct FastEmbedEmbedder {
   inner: Mutex<TextEmbedding>,
@@ -27,9 +27,9 @@ impl FastEmbedEmbedder {
 
 fn embedding_model_for(repo_id: &str) -> Result<EmbeddingModel> {
   match repo_id {
-    "BAAI/bge-small-zh-v1.5" => Ok(EmbeddingModel::BGESmallZHV15),
-    "BAAI/bge-large-zh-v1.5" => Ok(EmbeddingModel::BGELargeZHV15),
-    "BAAI/bge-m3" => Ok(EmbeddingModel::BGEM3),
+    EMBEDDING_REPO => Ok(EmbeddingModel::BGESmallZHV15),
+    EMBEDDING_REPO_BGE_LARGE_ZH => Ok(EmbeddingModel::BGELargeZHV15),
+    EMBEDDING_REPO_BGE_M3 => Ok(EmbeddingModel::BGEM3),
     other => Err(ModelError::Other(format!("unsupported embedding model: {other}")).into()),
   }
 }

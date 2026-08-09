@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use docq_core::{Chunk, Embedder, Result, ScoreExplain, SearchHit, Storage, WordSegmenter};
+use docq_core::{Chunk, Embedder, Reranker, Result, ScoreExplain, ScoredChunk, SearchHit, Storage, WordSegmenter};
 
 use crate::fusion;
 
@@ -11,12 +11,15 @@ pub struct RetrieverConfig {
   pub storage: Arc<dyn Storage>,
   pub embedder: Arc<dyn Embedder>,
   pub segmenter: Arc<dyn WordSegmenter>,
+  pub reranker: Option<Arc<dyn Reranker>>,
   /// BM25 recall depth (default 100).
   pub bm25_top_k: usize,
   /// Vector recall depth (default 100).
   pub vector_top_k: usize,
   /// RRF smoothing constant (default 60).
   pub rrf_k: usize,
+  /// Number of RRF results to rerank (default 20).
+  pub rerank_top_n: usize,
 }
 
 pub struct Retriever {
@@ -29,13 +32,15 @@ impl Retriever {
   }
 
   /// Run a hybrid search: embed the query, recall from BM25 and vector
-  /// stores in parallel channels, fuse with RRF, then return the top-k
-  /// chunks with full score breakdowns.
+  /// stores, fuse with RRF, optionally rerank with a cross-encoder, then
+  /// return the top-k chunks with full score breakdowns.
   ///
   /// Score directions in `ScoreExplain` are unified to "higher is better":
   /// - `bm25_score`: raw FTS5 BM25 score (higher = more relevant)
   /// - `vector_score`: derived similarity = `1.0 - distance` (higher = closer)
-  /// - `rrf_score` / `final_score`: RRF fused score (higher = better rank)
+  /// - `rrf_score`: RRF fused score (higher = better rank)
+  /// - `rerank_score` / `final_score`: cross-encoder score (higher = more
+  ///   relevant); when no reranker is configured, `final_score = rrf_score`.
   pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
     if query.trim().is_empty() {
       return Ok(Vec::new());
@@ -61,12 +66,8 @@ impl Retriever {
       .ok_or_else(|| docq_core::EmbedError::Other("empty embedding result".into()))?;
 
     let vector_raw = self.config.storage.search_vectors(&query_embedding, self.config.vector_top_k)?;
-
-    let vector_results: Vec<(String, f32)> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
-
-    // ---- Build lookup maps for score attribution ----
     let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
-    let vector_map: HashMap<String, f32> = vector_results.iter().cloned().collect();
+    let vector_map: HashMap<String, f32> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
 
     // ---- RRF fusion ----
     // RRF uses only rank positions, not raw scores, so the directional
@@ -74,33 +75,63 @@ impl Retriever {
     // does not affect fusion. Pass the original score vectors; fusion
     // ignores their values and uses rank only.
     let fused = fusion::reciprocal_rank_fusion(&bm25_results, &vector_raw, self.config.rrf_k);
-
-    let top_ids: Vec<String> = fused.iter().take(top_k).map(|(id, _)| id.clone()).collect();
-    if top_ids.is_empty() {
+    if fused.is_empty() {
       return Ok(Vec::new());
     }
 
-    // ---- Fetch full chunk text from storage ----
-    let chunks = self.config.storage.get_chunks(&top_ids)?;
-    let chunk_map: HashMap<String, Chunk> = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
+    let rrf_map: HashMap<String, f32> = fused.iter().cloned().collect();
+
+    // ---- Determine fetch depth, rerank, and final ordering in one branch ----
+    // Without a reranker: fetch top_k, keep RRF order.
+    // With a reranker: fetch rerank_top_n, cross-encoder rerank, sort by score.
+    let (chunk_map, rerank_map, ordered) = match &self.config.reranker {
+      None => {
+        let ids: Vec<String> = fused.iter().take(top_k).map(|(id, _)| id.clone()).collect();
+        let chunks = self.config.storage.get_chunks(&ids)?;
+        let map = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
+        (map, HashMap::new(), fused)
+      }
+      Some(reranker) => {
+        // The reranker receives the raw query (not jieba-segmented) because it
+        // runs its own BERT-style tokenization. It produces a single relevance
+        // score per (query, chunk) pair — higher is better, same direction as RRF.
+        let ids: Vec<String> = fused.iter().take(self.config.rerank_top_n).map(|(id, _)| id.clone()).collect();
+        let chunks = self.config.storage.get_chunks(&ids)?;
+        let chunk_map: HashMap<String, Chunk> = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
+
+        let rerank_chunks: Vec<Chunk> = ids.iter().filter_map(|id| chunk_map.get(id).cloned()).collect();
+        let scored: Vec<ScoredChunk> = reranker.rerank(query, &rerank_chunks).await?;
+        let rerank_map: HashMap<String, f32> = scored.into_iter().map(|sc| (sc.chunk.id, sc.score)).collect();
+
+        let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.config.rerank_top_n).collect();
+        sorted.sort_by(|a, b| {
+          let ra = rerank_map.get(&a.0).copied().unwrap_or(0.0);
+          let rb = rerank_map.get(&b.0).copied().unwrap_or(0.0);
+          rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        (chunk_map, rerank_map, sorted)
+      }
+    };
 
     // ---- Assemble SearchHit with per-stage ScoreExplain ----
-    let hits = fused
+    let hits = ordered
       .into_iter()
       .take(top_k)
-      .filter_map(|(id, rrf_score)| {
+      .filter_map(|(id, _)| {
         let chunk = chunk_map.get(&id)?;
-        let bm25_score = bm25_map.get(&id).copied();
-        let vector_score = vector_map.get(&id).copied();
+        let rrf_score = rrf_map.get(&id).copied();
+        let rerank_score = rerank_map.get(&id).copied();
+        let final_score = rerank_score.or(rrf_score).unwrap_or(0.0);
         Some(SearchHit {
           chunk: chunk.clone(),
-          score: rrf_score,
+          score: final_score,
           explain: ScoreExplain {
-            bm25_score,
-            vector_score,
-            rrf_score: Some(rrf_score),
-            rerank_score: None,
-            final_score: rrf_score,
+            bm25_score: bm25_map.get(&id).copied(),
+            vector_score: vector_map.get(&id).copied(),
+            rrf_score,
+            rerank_score,
+            final_score,
           },
         })
       })
@@ -113,7 +144,7 @@ impl Retriever {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use docq_core::{Chunker, Embedder, Result, Storage};
+  use docq_core::{Chunker, Embedder, Reranker, Result, ScoredChunk, Storage};
   use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, TextReader};
   use docq_storage::SqliteStorage;
   use tempfile::TempDir;
@@ -186,9 +217,42 @@ mod tests {
       storage: storage.clone(),
       embedder: Arc::new(StubEmbedder { dim: 512 }),
       segmenter: Arc::new(JiebaSegmenter),
+      reranker: None,
       bm25_top_k: 100,
       vector_top_k: 100,
       rrf_k: 60,
+      rerank_top_n: 20,
+    })
+  }
+
+  struct StubReranker;
+
+  #[async_trait::async_trait]
+  impl Reranker for StubReranker {
+    async fn rerank(&self, _query: &str, chunks: &[Chunk]) -> Result<Vec<ScoredChunk>> {
+      Ok(
+        chunks
+          .iter()
+          .enumerate()
+          .map(|(i, c)| ScoredChunk {
+            chunk: c.clone(),
+            score: (chunks.len() - i) as f32,
+          })
+          .collect(),
+      )
+    }
+  }
+
+  fn test_retriever_with_reranker(storage: &Arc<SqliteStorage>) -> Retriever {
+    Retriever::new(RetrieverConfig {
+      storage: storage.clone(),
+      embedder: Arc::new(StubEmbedder { dim: 512 }),
+      segmenter: Arc::new(JiebaSegmenter),
+      reranker: Some(Arc::new(StubReranker)),
+      bm25_top_k: 100,
+      vector_top_k: 100,
+      rrf_k: 60,
+      rerank_top_n: 20,
     })
   }
 
@@ -254,5 +318,29 @@ mod tests {
     let retriever = test_retriever(&storage);
     let hits = retriever.search("不存在的内容", 5).await.unwrap();
     assert!(hits.is_empty());
+  }
+
+  #[tokio::test]
+  async fn test_hybrid_search_with_reranker() {
+    let storage = Arc::new(test_storage());
+    seed_index(
+      &storage,
+      &[
+        ("a.txt", "今天是我的生日"),
+        ("b.txt", "分布式共识算法"),
+        ("c.txt", "天气不错"),
+      ],
+    )
+    .await;
+
+    let retriever = test_retriever_with_reranker(&storage);
+    let hits = retriever.search("生日", 5).await.unwrap();
+    assert!(!hits.is_empty());
+
+    for hit in &hits {
+      assert!(hit.explain.rerank_score.is_some());
+      assert_eq!(hit.score, hit.explain.final_score);
+      assert_eq!(hit.score, hit.explain.rerank_score.unwrap());
+    }
   }
 }
