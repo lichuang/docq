@@ -761,8 +761,12 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "docq-core",
+ "docq-indexer",
  "docq-model",
  "docq-retrieve",
+ "docq-storage",
+ "regex",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
 ]

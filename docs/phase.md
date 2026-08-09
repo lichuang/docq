@@ -32,7 +32,7 @@
 | **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ✅ 已完成 |
 | **P8** | Reranker | 2~3 天 | P7 | ✅ 已完成 |
 | **P9** | LLM 后端 | 3~4 天 | P1 | ✅ 已完成 |
-| **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ⬜ 未完成 |
+| **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ✅ 已完成 |
 | **P11** | Engine Facade | 2~3 天 | P10 | ⬜ 未完成 |
 | **P12** | CLI | 3~4 天 | P11 | ⬜ 未完成 |
 | **P13** | 集成测试 + 打磨 | 5~7 天 | P12 | ⬜ 未完成 |
@@ -969,7 +969,7 @@ async fn test_llm_complete() {
 
 ---
 
-## P10：Ask / Synthesis ⬜
+## P10：Ask / Synthesis ✅
 
 ### 目标
 
@@ -977,7 +977,7 @@ async fn test_llm_complete() {
 
 ### 任务
 
-#### P10.1 PromptBuilder
+#### P10.1 PromptBuilder ✅
 
 **文件：** `crates/docq-synth/src/prompt.rs`
 
@@ -1004,7 +1004,7 @@ Query: {query}
 Answer:
 ```
 
-#### P10.2 CitationParser
+#### P10.2 CitationParser ✅
 
 **文件：** `crates/docq-synth/src/citation.rs`
 
@@ -1018,7 +1018,7 @@ pub fn parse_citations(answer: &str, valid_markers: &[String]) -> Vec<Citation>;
 - 过滤不在 `valid_markers` 中的标记
 - 返回 `Citation { marker, source }`
 
-#### P10.3 Synthesizer
+#### P10.3 Synthesizer ✅
 
 **文件：** `crates/docq-synth/src/lib.rs`
 
