@@ -11,3 +11,7 @@ docq-storage = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+docq-indexer = { workspace = true }
+tempfile = "3"

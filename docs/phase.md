@@ -29,7 +29,7 @@
 | **P4** | ModelHub（下载/缓存/注册表） | 2~3 天 | P1 | ✅ 已完成 |
 | **P5** | Embedder + 文本读取 | 3~4 天 | P4 | ✅ 已完成 |
 | **P6** | Chunker + Indexer 流程 | 4~5 天 | P3, P5 | ✅ 已完成 |
-| **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ⬜ 未完成 |
+| **P7** | BM25 + 向量召回 + RRF | 4~5 天 | P6 | ✅ 已完成 |
 | **P8** | Reranker | 2~3 天 | P7 | ⬜ 未完成 |
 | **P9** | LLM 后端 | 3~4 天 | P1 | ⬜ 未完成 |
 | **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ⬜ 未完成 |
@@ -781,7 +781,7 @@ async fn test_index_and_search() {
 
 ---
 
-## P7：BM25 + 向量召回 + RRF ⬜
+## P7：BM25 + 向量召回 + RRF ✅
 
 ### 目标
 
@@ -789,7 +789,7 @@ async fn test_index_and_search() {
 
 ### 任务
 
-#### P7.1 Retriever 结构
+#### P7.1 Retriever 结构 ✅
 
 **文件：** `crates/docq-retrieve/src/lib.rs`
 
@@ -799,6 +799,7 @@ async fn test_index_and_search() {
 pub struct RetrieverConfig {
     pub storage: Arc<dyn Storage>,
     pub embedder: Arc<dyn Embedder>,
+    pub segmenter: Arc<dyn WordSegmenter>,
     pub bm25_top_k: usize,
     pub vector_top_k: usize,
     pub rrf_k: usize,
@@ -814,14 +815,14 @@ impl Retriever {
 }
 ```
 
-#### P7.2 两路召回
+#### P7.2 两路召回 ✅
 
 **要求：**
 
 - `search_bm25(query, top_k)` → `Storage::search_text`
 - `search_vector(query, top_k)` → embed query → `Storage::search_vectors`
 
-#### P7.3 RRF 融合
+#### P7.3 RRF 融合 ✅
 
 **文件：** `crates/docq-retrieve/src/fusion.rs`
 
@@ -838,7 +839,7 @@ pub fn reciprocal_rank_fusion(
 - 计算每个 chunk_id 的 `rrf_score = Σ 1 / (k + rank)`
 - 按 score 降序排列
 
-#### P7.4 组装 SearchHit
+#### P7.4 组装 SearchHit ✅
 
 **要求：**
 
