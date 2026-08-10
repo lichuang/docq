@@ -22,15 +22,15 @@ pub struct EngineConfig {
 }
 
 /// Pre-built components for `Engine::new` (dependency injection).
-/// Tests construct this with stub implementations; `Engine::open`
-/// constructs it with real model backends.
+/// Tests construct this with stub implementations; `Engine::open_for_*`
+/// constructs it with real model backends loaded on demand.
 pub struct EngineComponents {
   pub storage: Arc<dyn Storage>,
   pub chunker: Arc<dyn Chunker>,
   pub embedder: Arc<dyn Embedder>,
   pub segmenter: Arc<dyn WordSegmenter>,
   pub reranker: Option<Arc<dyn Reranker>>,
-  pub llm: Arc<dyn Llm>,
+  pub llm: Option<Arc<dyn Llm>>,
   pub reader: TextReader,
 }
 
@@ -38,12 +38,10 @@ pub struct Engine {
   storage: Arc<dyn Storage>,
   indexer: Indexer,
   retriever: Arc<Retriever>,
-  synthesizer: Synthesizer,
+  synthesizer: Option<Synthesizer>,
 }
 
 impl Engine {
-  /// Construct an `Engine` from pre-built components (dependency injection).
-  /// Tests use this to inject stub embedders / LLMs without network access.
   pub fn new(components: EngineComponents) -> Self {
     let EngineComponents {
       storage,
@@ -74,9 +72,11 @@ impl Engine {
       rerank_top_n: 20,
     }));
 
-    let synthesizer = Synthesizer::new(SynthesizerConfig {
-      retriever: retriever.clone(),
-      llm,
+    let synthesizer = llm.map(|llm| {
+      Synthesizer::new(SynthesizerConfig {
+        retriever: retriever.clone(),
+        llm,
+      })
     });
 
     Self {
@@ -87,42 +87,17 @@ impl Engine {
     }
   }
 
-  /// Open a workspace, download models on first use, and assemble all
-  /// components with default configurations. Requires network access for
-  /// initial model download (~6 GB total).
-  pub async fn open(config: EngineConfig) -> Result<Self> {
+  // ---- Shared helpers for model loading ----
+
+  fn open_storage(config: &EngineConfig) -> Result<Arc<dyn Storage>> {
     std::fs::create_dir_all(&config.workspace_path)
       .map_err(|e| docq_core::StoreError::Other(format!("create workspace dir: {e}")))?;
-    let db_path = config.workspace_path.join("docq.db");
-    let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open(&db_path)?);
+    let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_workspace(&config.workspace_path)?);
     storage.init()?;
+    Ok(storage)
+  }
 
-    let hub = ModelHub::new(config.model_cache_dir);
-
-    // ---- Download models and record their specs in model_versions ----
-    // hub.ensure downloads the model (if not cached) and writes the spec
-    // to the model_versions table via a StorageTx. This lets the indexer
-    // detect stale embeddings when the embedding model is upgraded.
-    let emb_spec = ModelRegistry::default_embedding();
-    hub.ensure(&emb_spec, storage.as_ref()).await?;
-
-    let rerank_spec = ModelRegistry::default_reranker();
-    hub.ensure(&rerank_spec, storage.as_ref()).await?;
-
-    let llm_spec = ModelRegistry::default_llm();
-    hub.ensure(&llm_spec, storage.as_ref()).await?;
-
-    // ---- Build inference backends from the downloaded model files ----
-    let embedder = Arc::new(FastEmbedEmbedder::from_model_hub(&hub, &emb_spec).await?);
-    let reranker = Arc::new(FastEmbedReranker::from_model_hub(&hub, &rerank_spec).await?);
-    let llm = Arc::new(GgufLlm::from_model_hub(&hub, &llm_spec, &LlmConfig::default()).await?);
-
-    let segmenter = Arc::new(JiebaSegmenter);
-    let reader = TextReader::new();
-
-    // ---- Build SentenceSplitter with the embedding model's tokenizer ----
-    // The tokenizer.json lives in the same HF repo as the embedding model,
-    // so we resolve it via hub.resolve() with a separate ModelSpec.
+  async fn build_chunker(hub: &ModelHub, emb_spec: &ModelSpec) -> Result<Arc<dyn Chunker>> {
     let tokenizer_spec = ModelSpec {
       role: "tokenizer".into(),
       repo_id: emb_spec.repo_id.clone(),
@@ -130,23 +105,91 @@ impl Engine {
       revision: emb_spec.revision.clone(),
       checksum: None,
     };
-    let tokenizer_file = hub.resolve(&tokenizer_spec).await?;
-    let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_file)
+    let path = hub.resolve(&tokenizer_spec).await?;
+    let tokenizer = tokenizers::Tokenizer::from_file(&path)
       .map_err(|e| docq_core::LlmError::Other(format!("load tokenizer: {e}")))?;
-    let chunker = Arc::new(SentenceSplitter::new(
+    Ok(Arc::new(SentenceSplitter::new(
       tokenizer,
       EMBEDDING_MAX_TOKENS,
       EMBEDDING_MAX_TOKENS / 10,
-    ));
+    )))
+  }
+
+  async fn load_embedding(hub: &ModelHub, storage: &dyn Storage) -> Result<(Arc<dyn Embedder>, Arc<dyn Chunker>)> {
+    let emb_spec = ModelRegistry::default_embedding();
+    hub.ensure(&emb_spec, storage).await?;
+    let embedder = Arc::new(FastEmbedEmbedder::from_model_hub(hub, &emb_spec).await?);
+    let chunker = Self::build_chunker(hub, &emb_spec).await?;
+    Ok((embedder, chunker))
+  }
+
+  async fn load_reranker(hub: &ModelHub, storage: &dyn Storage) -> Result<Arc<dyn Reranker>> {
+    let spec = ModelRegistry::default_reranker();
+    hub.ensure(&spec, storage).await?;
+    Ok(Arc::new(FastEmbedReranker::from_model_hub(hub, &spec).await?))
+  }
+
+  async fn load_llm(hub: &ModelHub, storage: &dyn Storage) -> Result<Arc<dyn Llm>> {
+    let spec = ModelRegistry::default_llm();
+    hub.ensure(&spec, storage).await?;
+    Ok(Arc::new(
+      GgufLlm::from_model_hub(hub, &spec, &LlmConfig::default()).await?,
+    ))
+  }
+
+  // ---- On-demand open methods ----
+
+  /// Open for indexing: loads embedding model only (~100 MB).
+  pub async fn open_for_index(config: EngineConfig) -> Result<Self> {
+    let storage = Self::open_storage(&config)?;
+    let hub = ModelHub::new(config.model_cache_dir);
+    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref()).await?;
 
     Ok(Self::new(EngineComponents {
       storage,
       chunker,
       embedder,
-      segmenter,
+      segmenter: Arc::new(JiebaSegmenter),
+      reranker: None,
+      llm: None,
+      reader: TextReader::new(),
+    }))
+  }
+
+  /// Open for search: loads embedding + reranker models (~1.1 GB).
+  pub async fn open_for_search(config: EngineConfig) -> Result<Self> {
+    let storage = Self::open_storage(&config)?;
+    let hub = ModelHub::new(config.model_cache_dir);
+    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref()).await?;
+    let reranker = Self::load_reranker(&hub, storage.as_ref()).await?;
+
+    Ok(Self::new(EngineComponents {
+      storage,
+      chunker,
+      embedder,
+      segmenter: Arc::new(JiebaSegmenter),
       reranker: Some(reranker),
-      llm,
-      reader,
+      llm: None,
+      reader: TextReader::new(),
+    }))
+  }
+
+  /// Open for ask: loads all models (~6 GB).
+  pub async fn open_for_ask(config: EngineConfig) -> Result<Self> {
+    let storage = Self::open_storage(&config)?;
+    let hub = ModelHub::new(config.model_cache_dir);
+    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref()).await?;
+    let reranker = Self::load_reranker(&hub, storage.as_ref()).await?;
+    let llm = Self::load_llm(&hub, storage.as_ref()).await?;
+
+    Ok(Self::new(EngineComponents {
+      storage,
+      chunker,
+      embedder,
+      segmenter: Arc::new(JiebaSegmenter),
+      reranker: Some(reranker),
+      llm: Some(llm),
+      reader: TextReader::new(),
     }))
   }
 
@@ -174,12 +217,25 @@ impl Engine {
     Ok(stats)
   }
 
+  pub async fn index_one(&self, name: &str) -> Result<IndexStats> {
+    let collections = self.storage.list_collections()?;
+    let col = collections
+      .into_iter()
+      .find(|c| c.name == name)
+      .ok_or_else(|| docq_core::StoreError::Other(format!("collection not found: {name}")))?;
+    self.indexer.index_directory(&col.path).await
+  }
+
   pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
     self.retriever.search(query, top_k).await
   }
 
   pub async fn ask(&self, query: &str) -> Result<docq_core::Answer> {
-    self.synthesizer.ask(query).await
+    let synth = self
+      .synthesizer
+      .as_ref()
+      .ok_or_else(|| docq_core::LlmError::Other("LLM not loaded — use open_for_ask".into()))?;
+    synth.ask(query).await
   }
 
   pub fn status(&self) -> Result<EngineStatus> {
@@ -198,7 +254,6 @@ impl Engine {
 mod tests {
   use super::*;
   use docq_core::{ChunkCandidate, Chunker, Embedder, Llm, Storage};
-  use docq_storage::SqliteStorage;
   use tempfile::TempDir;
 
   struct StubEmbedder {
@@ -264,7 +319,7 @@ mod tests {
       embedder: Arc::new(StubEmbedder { dim: 512 }),
       segmenter: Arc::new(JiebaSegmenter),
       reranker: None,
-      llm: Arc::new(StubLlm),
+      llm: Some(Arc::new(StubLlm)),
       reader: TextReader::new(),
     }
   }
@@ -318,5 +373,23 @@ mod tests {
 
     let answer = engine.ask("定价方案").await.unwrap();
     assert!(!answer.text.is_empty());
+  }
+
+  #[tokio::test]
+  async fn test_engine_ask_without_llm_errors() {
+    let tmp = TempDir::new().unwrap();
+    let storage = test_storage(&tmp);
+    let components = EngineComponents {
+      storage,
+      chunker: Arc::new(StubChunker),
+      embedder: Arc::new(StubEmbedder { dim: 512 }),
+      segmenter: Arc::new(JiebaSegmenter),
+      reranker: None,
+      llm: None,
+      reader: TextReader::new(),
+    };
+    let engine = Engine::new(components);
+    let result = engine.ask("test").await;
+    assert!(result.is_err());
   }
 }

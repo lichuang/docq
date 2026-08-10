@@ -17,9 +17,12 @@ pub const RERANKER_REPO: &str = "BAAI/bge-reranker-base";
 pub const RERANKER_FILE: &str = "onnx/model.onnx";
 
 // ---- Default LLM model ----
-
-pub const LLM_REPO: &str = "Qwen/Qwen2.5-7B-Instruct-GGUF";
-pub const LLM_FILE: &str = "qwen2.5-7b-instruct-q4_k_m.gguf";
+// Qwen2.5-3B is a good default: small enough to load quickly on consumer
+// hardware (~1.9 GB for q4_k_m) while still useful for RAG answers. The
+// official repo provides an un-split q4_k_m file, so the single-filename
+// loader works out of the box.
+pub const LLM_REPO: &str = "Qwen/Qwen2.5-3B-Instruct-GGUF";
+pub const LLM_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 
 // ---- Other supported embedding repos (for repo_id → fastembed mapping) ----
 

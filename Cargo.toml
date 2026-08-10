@@ -32,6 +32,9 @@ sqlite-vec = "0.1"
 glob = "0.3"
 walkdir = "2"
 sha2 = "0.10"
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
 docq-core = { path = "crates/docq-core" }
 docq-model = { path = "crates/docq-model" }
 docq-indexer = { path = "crates/docq-indexer" }

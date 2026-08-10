@@ -28,7 +28,7 @@ impl ModelHub {
   pub async fn resolve(&self, spec: &ModelSpec) -> Result<PathBuf> {
     let api = ApiBuilder::new()
       .with_cache_dir(self.cache_dir.clone())
-      .with_progress(false)
+      .with_progress(true)
       .build()
       .map_err(|e| ModelError::Other(e.to_string()))?;
 

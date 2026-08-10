@@ -34,7 +34,7 @@
 | **P9** | LLM 后端 | 3~4 天 | P1 | ✅ 已完成 |
 | **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ✅ 已完成 |
 | **P11** | Engine Facade | 2~3 天 | P10 | ✅ 已完成 |
-| **P12** | CLI | 3~4 天 | P11 | ⬜ 未完成 |
+| **P12** | CLI | 3~4 天 | P11 | ✅ 已完成 |
 | **P13** | 集成测试 + 打磨 | 5~7 天 | P12 | ⬜ 未完成 |
 
 **总预计：9 ~ 13 周**（已扣除 P0 的 3~5 天）
@@ -1128,7 +1128,7 @@ async fn test_engine_end_to_end() {
 
 ---
 
-## P12：CLI ⬜
+## P12：CLI ✅
 
 ### 目标
 
@@ -1136,7 +1136,7 @@ async fn test_engine_end_to_end() {
 
 ### 任务
 
-#### P12.1 CLI 框架
+#### P12.1 CLI 框架 ✅
 
 **文件：** `crates/docq/src/main.rs`
 
@@ -1159,18 +1159,18 @@ enum Commands {
 }
 ```
 
-#### P12.2 各命令实现
+#### P12.2 各命令实现 ✅
 
 | 命令 | 行为 |
 |---|---|
-| `docq init [--path ~/.docq]` | 创建 workspace 目录，初始化 SQLite |
+| `docq init [--workspace ~/.docq]` | 创建 workspace 目录，初始化 SQLite |
 | `docq add <path> --name <collection>` | 添加 collection |
 | `docq index [--collection <name>]` | 索引全部或指定 collection |
 | `docq search <query> [--top-k 5] [--explain] [--json]` | 搜索 |
 | `docq ask <query> [--json]` | 问答 |
 | `docq status [--json]` | 显示 workspace 状态 |
 
-#### P12.3 JSON 输出
+#### P12.3 JSON 输出 ✅
 
 **要求：**
 

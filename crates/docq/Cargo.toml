@@ -14,6 +14,9 @@ docq-synth = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
 tokenizers = { workspace = true }
 async-trait = { workspace = true }
 

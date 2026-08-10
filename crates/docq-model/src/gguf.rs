@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 
 use docq_core::{Llm, LlmConfig, LlmError, ModelSpec, Result};
+use encoding_rs::UTF_8;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
@@ -21,7 +22,8 @@ impl GgufLlm {
   pub async fn from_model_hub(hub: &ModelHub, spec: &ModelSpec, config: &LlmConfig) -> Result<Self> {
     let path = hub.resolve(spec).await?;
 
-    let backend = LlamaBackend::init().map_err(|e| LlmError::Other(format!("init backend: {e}")))?;
+    let mut backend = LlamaBackend::init().map_err(|e| LlmError::Other(format!("init backend: {e}")))?;
+    backend.void_logs();
     let model_params = LlamaModelParams::default();
     let model = LlamaModel::load_from_file(&backend, &path, &model_params)
       .map_err(|e| LlmError::Other(format!("load model: {e}")))?;
@@ -78,6 +80,7 @@ impl Llm for GgufLlm {
     ]);
 
     let mut output = String::new();
+    let mut decoder = UTF_8.new_decoder();
 
     for step in 0..self.config.max_tokens {
       let pos = tokens.len() as i32 + step as i32;
@@ -87,11 +90,10 @@ impl Llm for GgufLlm {
         break;
       }
 
-      let bytes = self
+      let piece = self
         .model
-        .token_to_piece_bytes(token, 32, true, None)
+        .token_to_piece(token, &mut decoder, true, None)
         .map_err(|e| LlmError::Other(format!("detokenize: {e}")))?;
-      let piece = String::from_utf8(bytes).map_err(|e| LlmError::Other(format!("utf8: {e}")))?;
       output.push_str(&piece);
 
       batch.clear();

@@ -559,7 +559,7 @@ impl Engine {
 
 ```bash
 # 初始化 workspace
-docq init [--path ~/.docq]
+docq init [--workspace ~/.docq]
 
 # 添加集合
 docq add <path> --name <collection>

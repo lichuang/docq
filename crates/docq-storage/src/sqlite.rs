@@ -36,6 +36,8 @@ pub struct SqliteStorage {
   conn: Arc<Mutex<Connection>>,
 }
 
+const DB_FILE_NAME: &str = "docq.db";
+
 impl SqliteStorage {
   pub fn open(path: impl AsRef<Path>) -> Result<Self> {
     ensure_vec_extension();
@@ -51,6 +53,14 @@ impl SqliteStorage {
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
     })
+  }
+
+  /// Open the default SQLite database inside a workspace directory.
+  /// Keeps the concrete filename (`docq.db`) encapsulated in the storage crate
+  /// so callers don't assume SQLite implementation details.
+  pub fn open_workspace(workspace: impl AsRef<Path>) -> Result<Self> {
+    let path = workspace.as_ref().join(DB_FILE_NAME);
+    Self::open(path)
   }
 }
 
