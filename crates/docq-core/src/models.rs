@@ -97,3 +97,16 @@ impl Default for LlmConfig {
     }
   }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Collection {
+  pub name: String,
+  pub path: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineStatus {
+  pub documents: usize,
+  pub chunks: usize,
+  pub collections: Vec<Collection>,
+}

@@ -676,6 +676,7 @@ name = "docq"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "docq-core",
  "docq-indexer",
  "docq-model",
@@ -683,6 +684,8 @@ dependencies = [
  "docq-storage",
  "docq-synth",
  "serde",
+ "tempfile",
+ "tokenizers 0.20.4",
  "tokio",
 ]
 

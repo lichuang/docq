@@ -33,7 +33,7 @@
 | **P8** | Reranker | 2~3 天 | P7 | ✅ 已完成 |
 | **P9** | LLM 后端 | 3~4 天 | P1 | ✅ 已完成 |
 | **P10** | Ask / Synthesis | 3~4 天 | P8, P9 | ✅ 已完成 |
-| **P11** | Engine Facade | 2~3 天 | P10 | ⬜ 未完成 |
+| **P11** | Engine Facade | 2~3 天 | P10 | ✅ 已完成 |
 | **P12** | CLI | 3~4 天 | P11 | ⬜ 未完成 |
 | **P13** | 集成测试 + 打磨 | 5~7 天 | P12 | ⬜ 未完成 |
 
@@ -1062,7 +1062,7 @@ async fn test_ask() {
 
 ---
 
-## P11：Engine Facade ⬜
+## P11：Engine Facade ✅
 
 ### 目标
 
@@ -1070,9 +1070,9 @@ async fn test_ask() {
 
 ### 任务
 
-#### P11.1 Engine 实现
+#### P11.1 Engine 实现 ✅
 
-**文件：** `crates/docq-core/src/engine.rs`
+**文件：** `crates/docq/src/engine.rs`
 
 **要求：**
 
@@ -1084,16 +1084,15 @@ pub struct EngineConfig {
 
 pub struct Engine {
     storage: Arc<dyn Storage>,
-    embedder: Arc<dyn Embedder>,
-    reranker: Arc<dyn Reranker>,
-    llm: Arc<dyn LLM>,
-    chunker: Arc<dyn Chunker>,
     indexer: Indexer,
-    retriever: Retriever,
+    retriever: Arc<Retriever>,
     synthesizer: Synthesizer,
 }
 
 impl Engine {
+    pub fn new(storage: Arc<dyn Storage>, chunker: Arc<dyn Chunker>, embedder: Arc<dyn Embedder>,
+               segmenter: Arc<dyn WordSegmenter>, reranker: Option<Arc<dyn Reranker>>,
+               llm: Arc<dyn Llm>, reader: TextReader) -> Self;
     pub async fn open(config: EngineConfig) -> Result<Self>;
     pub fn add_collection(&self, path: impl AsRef<Path>, name: &str) -> Result<()>;
     pub fn list_collections(&self) -> Result<Vec<Collection>>;
@@ -1104,7 +1103,7 @@ impl Engine {
 }
 ```
 
-#### P11.2 Collection 配置持久化
+#### P11.2 Collection 配置持久化 ✅
 
 **要求：**
 

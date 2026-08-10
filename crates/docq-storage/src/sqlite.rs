@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Once};
 
 use chrono::{DateTime, Utc};
-use docq_core::{Chunk, Document, ModelSpec, Result, Storage, StorageTx, StoreError};
+use docq_core::{Chunk, Collection, Document, ModelSpec, Result, Storage, StorageTx, StoreError};
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use sqlite_vec::sqlite3_vec_init;
@@ -185,15 +185,19 @@ impl Storage for SqliteStorage {
          chunk_id  TEXT PRIMARY KEY,
          embedding FLOAT[512] distance_metric=cosine
        );
-       CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
-         -- FTS5 full-text index over jieba-pre-tokenised text.
-         -- `text` here stores space-separated tokens (jieba output), NOT the raw chunk text.
-         -- Raw text lives in `chunks.text`; this table only serves BM25 ranking.
-         -- `unicode61` splits on the spaces between tokens, treating each jieba word as a term.
-         chunk_id,
-         text,
-         tokenize='unicode61'
-       );",
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
+          -- FTS5 full-text index over jieba-pre-tokenised text.
+          -- `text` here stores space-separated tokens (jieba output), NOT the raw chunk text.
+          -- Raw text lives in `chunks.text`; this table only serves BM25 ranking.
+          -- `unicode61` splits on the spaces between tokens, treating each jieba word as a term.
+          chunk_id,
+          text,
+          tokenize='unicode61'
+        );
+        CREATE TABLE IF NOT EXISTS collections (
+          name TEXT PRIMARY KEY,
+          path TEXT NOT NULL
+        );",
       )
       .map_err(map_rusqlite)?;
     Ok(())
@@ -373,6 +377,28 @@ impl Storage for SqliteStorage {
     }
   }
 
+  fn list_collections(&self) -> Result<Vec<Collection>> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    let mut stmt = conn.prepare("SELECT name, path FROM collections").map_err(map_rusqlite)?;
+    let rows = stmt
+      .query_map([], |r| {
+        Ok(Collection {
+          name: r.get(0)?,
+          path: r.get::<_, String>(1)?.into(),
+        })
+      })
+      .map_err(map_rusqlite)?
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .map_err(map_rusqlite)?;
+    Ok(rows)
+  }
+
+  fn count_chunks(&self) -> Result<usize> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0)).map_err(map_rusqlite)?;
+    Ok(count as usize)
+  }
+
   fn begin_tx(&self) -> Result<Box<dyn StorageTx + '_>> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     conn.execute_batch("BEGIN").map_err(map_rusqlite)?;
@@ -434,6 +460,17 @@ impl StorageTx for SqliteTransaction {
   fn set_model_version(&mut self, role: &str, version: &ModelSpec) -> Result<()> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     crate::sqlite::set_model_version(&conn, role, version).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn add_collection(&mut self, name: &str, path: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    conn
+      .execute(
+        "INSERT OR REPLACE INTO collections (name, path) VALUES (?1, ?2)",
+        params![name, path],
+      )
+      .map_err(map_rusqlite)?;
     Ok(())
   }
 

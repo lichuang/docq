@@ -1,22 +1,35 @@
 use docq_core::ModelSpec;
 
-// ---- Default models ----
+// ---- Default embedding model ----
 
 pub const EMBEDDING_REPO: &str = "Xenova/bge-small-zh-v1.5";
 pub const EMBEDDING_FILE: &str = "onnx/model.onnx";
+/// Tokenizer file co-located in the same HF repo as the embedding model.
+pub const EMBEDDING_TOKENIZER_FILE: &str = "tokenizer.json";
+/// Maximum input length the embedding model accepts. Chunks exceeding this
+/// are silently truncated by the ONNX runtime, so `SentenceSplitter` must
+/// use this as `chunk_size` to avoid losing tail content.
+pub const EMBEDDING_MAX_TOKENS: usize = 512;
+
+// ---- Default reranker model ----
+
 pub const RERANKER_REPO: &str = "BAAI/bge-reranker-base";
 pub const RERANKER_FILE: &str = "onnx/model.onnx";
+
+// ---- Default LLM model ----
+
 pub const LLM_REPO: &str = "Qwen/Qwen2.5-7B-Instruct-GGUF";
 pub const LLM_FILE: &str = "qwen2.5-7b-instruct-q4_k_m.gguf";
 
-// ---- All supported embedding repos (for repo_id → fastembed mapping) ----
+// ---- Other supported embedding repos (for repo_id → fastembed mapping) ----
 
 pub const EMBEDDING_REPO_BGE_LARGE_ZH: &str = "Xenova/bge-large-zh-v1.5";
 pub const EMBEDDING_REPO_BGE_M3: &str = "BAAI/bge-m3";
 
-// ---- All supported reranker repos (for repo_id → fastembed mapping) ----
+// ---- Other supported reranker repos (for repo_id → fastembed mapping) ----
 
 pub const RERANKER_REPO_BGE_V2_M3: &str = "BAAI/bge-reranker-v2-m3";
+/// Same model as above, mirrored under a different HF repo.
 pub const RERANKER_REPO_BGE_V2_M3_ALT: &str = "rozgo/bge-reranker-v2-m3";
 pub const RERANKER_REPO_JINA_V1_TURBO_EN: &str = "jinaai/jina-reranker-v1-turbo-en";
 pub const RERANKER_REPO_JINA_V2_MULTILINGUAL: &str = "jinaai/jina-reranker-v2-base-multilingual";

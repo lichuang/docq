@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 
 use crate::error::Result;
-use crate::models::{Chunk, ChunkCandidate, Document, ModelSpec};
+use crate::models::{Chunk, ChunkCandidate, Collection, Document, ModelSpec};
 
 #[async_trait]
 pub trait Embedder: Send + Sync {
@@ -48,6 +48,11 @@ pub trait Storage: Send + Sync {
   fn search_vectors(&self, embedding: &[f32], top_k: usize) -> Result<Vec<(String, f32)>>;
   fn search_text(&self, query: &str, top_k: usize) -> Result<Vec<(String, f32)>>;
   fn get_model_version(&self, role: &str) -> Result<Option<ModelSpec>>;
+  fn list_collections(&self) -> Result<Vec<Collection>>;
+
+  // ---- counts ----
+
+  fn count_chunks(&self) -> Result<usize>;
 
   // ---- transactions ----
 
@@ -69,5 +74,6 @@ pub trait StorageTx {
   fn add_vectors(&mut self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()>;
   fn add_fts_chunks(&mut self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()>;
   fn set_model_version(&mut self, role: &str, version: &ModelSpec) -> Result<()>;
+  fn add_collection(&mut self, name: &str, path: &str) -> Result<()>;
   fn commit(&mut self) -> Result<()>;
 }

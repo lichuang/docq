@@ -24,8 +24,8 @@ See the overview table at the top of `docs/phase.md` (each phase has ✅ / ⬜).
 | P3.1 sqlite-vec integration | ✅ done |
 | P3.2 FTS5 integration | ✅ done |
 | P3.3 Transactional consistency (StorageTx) | ✅ done |
-| P10 Ask / Synthesis | ✅ done |
-| P11–P13 | ⬜ pending |
+| P11 Engine Facade | ✅ done |
+| P12–P13 | ⬜ pending |
 
 ## Common commands
 
