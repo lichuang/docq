@@ -1,8 +1,9 @@
-//! Workspace-level configuration loaded from `docq.toml`.
+//! Global default configuration loaded from `config.toml`.
 //!
-//! The configuration file lives inside the workspace directory and controls
-//! which models to use, how documents are chunked, and how retrieval /
-//! generation behave.
+//! The configuration file lives in the platform-specific default config
+//! directory (e.g. `~/.config/docq`) and controls which models to use, how
+//! documents are chunked, and how retrieval / generation behave. It is loaded
+//! independently of the workspace (data) directory.
 
 use std::path::{Path, PathBuf};
 

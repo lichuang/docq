@@ -18,7 +18,7 @@ pub use engine::{Engine, EngineComponents, EngineConfig};
   about = "Local-first RAG: hybrid search and cited answers over your documents (downloads models on first use)"
 )]
 struct Cli {
-  /// Workspace directory path (default: ~/.docq).
+  /// Workspace directory path (default: ~/.config/docq on Unix, %LOCALAPPDATA%\docq on Windows).
   #[arg(long, global = true)]
   workspace: Option<PathBuf>,
 
@@ -100,6 +100,29 @@ fn default_workspace() -> PathBuf {
   }
 }
 
+/// Default directory for the global `config.toml`.
+/// This is independent from the workspace (data) directory: configuration is
+/// always loaded from here, even when `--workspace` points somewhere else.
+fn default_config_dir() -> PathBuf {
+  // Keep the global config in the conventional per-platform config location.
+  #[cfg(target_os = "macos")]
+  {
+    dirs::home_dir().unwrap_or_default().join(".config").join("docq")
+  }
+  #[cfg(target_os = "linux")]
+  {
+    dirs::config_dir().unwrap_or_default().join("docq")
+  }
+  #[cfg(target_os = "windows")]
+  {
+    dirs::config_local_dir().unwrap_or_default().join("docq")
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+  {
+    dirs::home_dir().unwrap_or_default().join(".docq")
+  }
+}
+
 fn default_model_cache() -> PathBuf {
   dirs::home_dir().unwrap_or_default().join(".cache").join("docq").join("models")
 }
@@ -136,17 +159,35 @@ async fn main() {
   }
 }
 
+/// Ensure the global config directory and `config.toml` exist.
+/// If the config file is missing, write a default one and return it.
+fn ensure_config() -> anyhow::Result<DocqConfig> {
+  let config_dir = default_config_dir();
+  std::fs::create_dir_all(&config_dir)?;
+  let config_path = DocqConfig::path(&config_dir);
+  if config_path.exists() {
+    DocqConfig::load(&config_dir)
+  } else {
+    let cfg = DocqConfig::default();
+    std::fs::write(&config_path, cfg.to_toml()?)
+      .map_err(|e| anyhow::anyhow!("write default config {}: {e}", config_path.display()))?;
+    Ok(cfg)
+  }
+}
+
 async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> anyhow::Result<()> {
+  // The global configuration is always loaded from the default config directory,
+  // regardless of which workspace is being used.
+  let config = ensure_config()?;
+  // Make sure the workspace (data) directory exists for commands that need storage.
+  std::fs::create_dir_all(workspace)?;
+
   match cmd {
     Commands::Init => {
       std::fs::create_dir_all(workspace)?;
       let storage = docq_storage::SqliteStorage::open_workspace(workspace)?;
       use docq_core::Storage;
       storage.init()?;
-      let config = DocqConfig::default();
-      let config_path = DocqConfig::path(workspace);
-      std::fs::write(&config_path, config.to_toml()?)
-        .map_err(|e| anyhow::anyhow!("write default config {}: {e}", config_path.display()))?;
       println!("Initialized workspace at {}", workspace.display());
     }
 
@@ -186,8 +227,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
     }
 
     Commands::Index { collection } => {
-      let config = DocqConfig::load(workspace)?;
-      let engine = Engine::open_for_index(engine_config(workspace, model_cache, config)).await?;
+      let engine = Engine::open_for_index(engine_config(workspace, model_cache, config.clone())).await?;
       let stats = if let Some(name) = collection {
         engine.index_one(name).await?
       } else {
@@ -205,8 +245,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
       explain,
       json,
     } => {
-      let config = DocqConfig::load(workspace)?;
-      let engine = Engine::open_for_search(engine_config(workspace, model_cache, config)).await?;
+      let engine = Engine::open_for_search(engine_config(workspace, model_cache, config.clone())).await?;
       let hits = engine.search(query, *top_k).await?;
 
       if *json {
@@ -242,8 +281,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
     }
 
     Commands::Ask { query, json } => {
-      let config = DocqConfig::load(workspace)?;
-      let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config)).await?;
+      let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config.clone())).await?;
       let answer = engine.ask(query).await?;
 
       if *json {
