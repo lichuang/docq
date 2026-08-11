@@ -7,13 +7,17 @@
 #   scripts/publish-crate.sh docq-model --dry-run
 #   scripts/publish-crate.sh docq --allow-dirty
 #
-# Dependency order for the first release (publish from bottom to top):
+# Dependency order for the first release (publish from bottom to top).
+# Dev-dependencies are also resolved from crates.io during publish, so they
+# must be published before the crate that references them.
+#
 #   1. docq-core
-#   2. docq-model          (depends on docq-core)
-#   3. docq-storage        (depends on docq-core)
+#   2. docq-storage        (dev-dependency of docq-model)
+#   3. docq-model          (depends on docq-core; dev-depends on docq-storage)
 #   4. docq-indexer        (depends on docq-core, docq-model, docq-storage)
 #   5. docq-retrieve       (depends on docq-core, docq-model, docq-storage)
-#   6. docq-synth          (depends on docq-core, docq-model, docq-retrieve)
+#   6. docq-synth          (depends on docq-core, docq-model, docq-retrieve;
+#                         dev-depends on docq-indexer, docq-storage)
 #   7. docq                (depends on all of the above)
 
 set -euo pipefail
