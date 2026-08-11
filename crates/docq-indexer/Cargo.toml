@@ -3,6 +3,12 @@ name = "docq-indexer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Document reading, chunking, and incremental indexing for docq."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lichuang/docq"
+readme = "../../README.md"
+keywords = ["rag", "indexing", "chunking", "search"]
+categories = ["algorithms", "text-processing"]
 
 [dependencies]
 docq-core = { workspace = true }

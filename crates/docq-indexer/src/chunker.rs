@@ -151,9 +151,9 @@ impl Chunker for SentenceSplitter {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tokenizers::Tokenizer;
   use tokenizers::models::wordlevel::WordLevelBuilder;
   use tokenizers::pre_tokenizers::whitespace::Whitespace;
-  use tokenizers::Tokenizer;
 
   fn test_tokenizer() -> Tokenizer {
     let mut vocab = std::collections::HashMap::new();

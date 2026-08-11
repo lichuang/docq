@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, Once};
 use chrono::{DateTime, Utc};
 use docq_core::{Chunk, Collection, Document, ModelSpec, Result, Storage, StorageTx, StoreError};
 use rusqlite::ffi::sqlite3_auto_extension;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use sqlite_vec::sqlite3_vec_init;
 
 use crate::error::map_rusqlite;
@@ -497,10 +497,10 @@ impl StorageTx for SqliteTransaction {
 
 impl Drop for SqliteTransaction {
   fn drop(&mut self) {
-    if !self.committed {
-      if let Ok(conn) = self.conn.lock() {
-        let _ = conn.execute_batch("ROLLBACK");
-      }
+    if !self.committed
+      && let Ok(conn) = self.conn.lock()
+    {
+      let _ = conn.execute_batch("ROLLBACK");
     }
   }
 }

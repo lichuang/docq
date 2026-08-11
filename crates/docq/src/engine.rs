@@ -8,7 +8,7 @@ use docq_core::{
   WordSegmenter,
 };
 use docq_indexer::{IndexStats, Indexer, IndexerConfig, JiebaSegmenter, SentenceSplitter, TextReader};
-use docq_model::{FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub, EMBEDDING_TOKENIZER_FILE};
+use docq_model::{EMBEDDING_TOKENIZER_FILE, FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
 use docq_retrieve::{Retriever, RetrieverConfig};
 
 use crate::config::{DocqConfig, RetrievalConfig};

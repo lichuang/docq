@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use docq_core::{EmbedError, Embedder, ModelError, ModelSpec, Result};
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 
-use crate::{ModelHub, EMBEDDING_REPO, EMBEDDING_REPO_BGE_LARGE_ZH, EMBEDDING_REPO_BGE_M3};
+use crate::{EMBEDDING_REPO, EMBEDDING_REPO_BGE_LARGE_ZH, EMBEDDING_REPO_BGE_M3, ModelHub};
 
 pub struct FastEmbedEmbedder {
   inner: Mutex<TextEmbedding>,

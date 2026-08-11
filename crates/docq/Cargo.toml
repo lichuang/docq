@@ -3,6 +3,12 @@ name = "docq"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "CLI for local-first search and answers over your documents."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/lichuang/docq"
+readme = "../../README.md"
+keywords = ["cli", "rag", "search", "local"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 docq-core = { workspace = true }

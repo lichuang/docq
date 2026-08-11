@@ -6,7 +6,7 @@ pub mod tokenizer;
 
 pub use chunker::SentenceSplitter;
 pub use reader::{DocumentSource, TextReader};
-pub use tokenizer::{jieba_tokenize, JiebaSegmenter};
+pub use tokenizer::{JiebaSegmenter, jieba_tokenize};
 
 use std::path::Path;
 use std::sync::Arc;
@@ -52,13 +52,13 @@ impl Indexer {
     let content_hash = sha256_hex(&content);
     let doc_id = path.to_string_lossy().to_string();
 
-    if let Some(existing) = self.config.storage.get_document(&doc_id)? {
-      if existing.content_hash == content_hash {
-        return Ok(IndexStats {
-          files_skipped: 1,
-          ..Default::default()
-        });
-      }
+    if let Some(existing) = self.config.storage.get_document(&doc_id)?
+      && existing.content_hash == content_hash
+    {
+      return Ok(IndexStats {
+        files_skipped: 1,
+        ..Default::default()
+      });
     }
 
     let candidates = self.config.chunker.chunk(&content);
