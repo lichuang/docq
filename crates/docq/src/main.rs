@@ -1,12 +1,15 @@
 mod config;
 mod engine;
 
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process;
 
 use config::DocqConfig;
 
 use clap::{Parser, Subcommand};
-use docq_core::Storage;
+use docq_core::{EngineStatus, Storage};
+use docq_storage::SqliteStorage;
 use serde::Serialize;
 
 pub use engine::{Engine, EngineComponents, EngineConfig};
@@ -25,6 +28,10 @@ struct Cli {
   /// Model cache directory (default: ~/.cache/docq/models).
   #[arg(long, global = true)]
   model_cache: Option<PathBuf>,
+
+  /// Path to a custom configuration file (default: ~/.config/docq/config.toml).
+  #[arg(short = 'c', long, global = true)]
+  config: Option<PathBuf>,
 
   #[command(subcommand)]
   command: Commands,
@@ -152,10 +159,21 @@ async fn main() {
 
   let workspace = cli.workspace.unwrap_or_else(default_workspace);
   let model_cache = cli.model_cache.unwrap_or_else(default_model_cache);
+  let config_result = match cli.config {
+    Some(ref path) => DocqConfig::load_from_file(path),
+    None => ensure_config(),
+  };
+  let config = match config_result {
+    Ok(cfg) => cfg,
+    Err(e) => {
+      print_error_json(&e.to_string());
+      process::exit(1);
+    }
+  };
 
-  if let Err(e) = run_command(&cli.command, &workspace, &model_cache).await {
+  if let Err(e) = run_command(&cli.command, &workspace, &model_cache, config).await {
     print_error_json(&e.to_string());
-    std::process::exit(1);
+    process::exit(1);
   }
 }
 
@@ -163,29 +181,26 @@ async fn main() {
 /// If the config file is missing, write a default one and return it.
 fn ensure_config() -> anyhow::Result<DocqConfig> {
   let config_dir = default_config_dir();
-  std::fs::create_dir_all(&config_dir)?;
+  fs::create_dir_all(&config_dir)?;
   let config_path = DocqConfig::path(&config_dir);
   if config_path.exists() {
     DocqConfig::load(&config_dir)
   } else {
     let cfg = DocqConfig::default();
-    std::fs::write(&config_path, cfg.to_toml()?)
+    fs::write(&config_path, cfg.to_toml()?)
       .map_err(|e| anyhow::anyhow!("write default config {}: {e}", config_path.display()))?;
     Ok(cfg)
   }
 }
 
-async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> anyhow::Result<()> {
-  // The global configuration is always loaded from the default config directory,
-  // regardless of which workspace is being used.
-  let config = ensure_config()?;
+async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path, config: DocqConfig) -> anyhow::Result<()> {
   // Make sure the workspace (data) directory exists for commands that need storage.
-  std::fs::create_dir_all(workspace)?;
+  fs::create_dir_all(workspace)?;
 
   match cmd {
     Commands::Init => {
-      std::fs::create_dir_all(workspace)?;
-      let storage = docq_storage::SqliteStorage::open_workspace(workspace)?;
+      fs::create_dir_all(workspace)?;
+      let storage = SqliteStorage::open_workspace(workspace)?;
       use docq_core::Storage;
       storage.init()?;
       println!("Initialized workspace at {}", workspace.display());
@@ -194,7 +209,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
     Commands::Add { path, name } => {
       // add only needs storage, not models — avoid Engine::open to skip model downloads
       let storage = open_storage(workspace)?;
-      let canonical = std::fs::canonicalize(path)?;
+      let canonical = fs::canonicalize(path)?;
       let path_str = canonical.to_string_lossy().to_string();
       let mut tx = storage.begin_tx()?;
       tx.add_collection(name, &path_str)?;
@@ -208,7 +223,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
       let docs = storage.list_documents()?;
       let collections = storage.list_collections()?;
       let chunks = storage.count_chunks()?;
-      let status = docq_core::EngineStatus {
+      let status = EngineStatus {
         documents: docs.len(),
         chunks,
         collections,
@@ -300,8 +315,8 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
   Ok(())
 }
 
-fn open_storage(workspace: &Path) -> anyhow::Result<docq_storage::SqliteStorage> {
-  let storage = docq_storage::SqliteStorage::open_workspace(workspace)?;
+fn open_storage(workspace: &Path) -> anyhow::Result<SqliteStorage> {
+  let storage = SqliteStorage::open_workspace(workspace)?;
   storage.init()?;
   Ok(storage)
 }

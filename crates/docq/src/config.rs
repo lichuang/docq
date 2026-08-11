@@ -5,9 +5,10 @@
 //! documents are chunked, and how retrieval / generation behave. It is loaded
 //! independently of the workspace (data) directory.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use docq_core::{LlmConfig, ModelSpec};
+use docq_core::{LlmConfig, LlmError, ModelSpec};
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
@@ -66,16 +67,13 @@ pub struct LlmGenerationConfig {
 }
 
 impl TryFrom<LlmGenerationConfig> for LlmConfig {
-  type Error = docq_core::LlmError;
+  type Error = LlmError;
 
   fn try_from(c: LlmGenerationConfig) -> Result<Self, Self::Error> {
     Ok(Self {
       n_ctx: c.n_ctx,
-      temperature: c
-        .temperature
-        .parse()
-        .map_err(|e| docq_core::LlmError::Other(format!("invalid temperature: {e}")))?,
-      top_p: c.top_p.parse().map_err(|e| docq_core::LlmError::Other(format!("invalid top_p: {e}")))?,
+      temperature: c.temperature.parse().map_err(|e| LlmError::Other(format!("invalid temperature: {e}")))?,
+      top_p: c.top_p.parse().map_err(|e| LlmError::Other(format!("invalid top_p: {e}")))?,
       max_tokens: c.max_tokens,
       seed: c.seed,
       system_prompt: c.system_prompt,
@@ -162,7 +160,11 @@ impl DocqConfig {
     if !path.exists() {
       return Ok(Self::default());
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("read config {}: {e}", path.display()))?;
+    Self::load_from_file(&path)
+  }
+
+  pub fn load_from_file(path: &Path) -> anyhow::Result<Self> {
+    let text = fs::read_to_string(path).map_err(|e| anyhow::anyhow!("read config {}: {e}", path.display()))?;
     let config: Self = toml::from_str(&text).map_err(|e| anyhow::anyhow!("parse config {}: {e}", path.display()))?;
     Ok(config)
   }
@@ -179,6 +181,7 @@ impl DocqConfig {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use tempfile::TempDir;
 
   #[test]
   fn test_default_config_roundtrip() {
@@ -192,7 +195,7 @@ mod tests {
 
   #[test]
   fn test_load_missing_returns_default() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = TempDir::new().unwrap();
     let config = DocqConfig::load(tmp.path()).unwrap();
     assert_eq!(config.indexing.chunk_size, docq_model::EMBEDDING_MAX_TOKENS);
   }
