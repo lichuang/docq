@@ -84,6 +84,7 @@ pub struct LlmConfig {
   pub top_p: f32,
   pub max_tokens: usize,
   pub seed: u32,
+  pub system_prompt: String,
 }
 
 impl Default for LlmConfig {
@@ -94,6 +95,7 @@ impl Default for LlmConfig {
       top_p: 0.9,
       max_tokens: 512,
       seed: 0,
+      system_prompt: "You are a helpful assistant.".into(),
     }
   }
 }

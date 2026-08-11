@@ -8,17 +8,17 @@ use docq_core::{
   WordSegmenter,
 };
 use docq_indexer::{IndexStats, Indexer, IndexerConfig, JiebaSegmenter, SentenceSplitter, TextReader};
-use docq_model::{
-  FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub, ModelRegistry, EMBEDDING_MAX_TOKENS,
-  EMBEDDING_TOKENIZER_FILE,
-};
+use docq_model::{FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub, EMBEDDING_TOKENIZER_FILE};
 use docq_retrieve::{Retriever, RetrieverConfig};
+
+use crate::config::{DocqConfig, RetrievalConfig};
 use docq_storage::SqliteStorage;
 use docq_synth::{Synthesizer, SynthesizerConfig};
 
 pub struct EngineConfig {
   pub workspace_path: PathBuf,
   pub model_cache_dir: PathBuf,
+  pub config: DocqConfig,
 }
 
 /// Pre-built components for `Engine::new` (dependency injection).
@@ -32,6 +32,7 @@ pub struct EngineComponents {
   pub reranker: Option<Arc<dyn Reranker>>,
   pub llm: Option<Arc<dyn Llm>>,
   pub reader: TextReader,
+  pub retrieval: RetrievalConfig,
 }
 
 pub struct Engine {
@@ -51,6 +52,7 @@ impl Engine {
       reranker,
       llm,
       reader,
+      retrieval,
     } = components;
 
     let indexer = Indexer::new(IndexerConfig {
@@ -66,10 +68,10 @@ impl Engine {
       embedder,
       segmenter,
       reranker,
-      bm25_top_k: 100,
-      vector_top_k: 100,
-      rrf_k: 60,
-      rerank_top_n: 20,
+      bm25_top_k: retrieval.bm25_top_k,
+      vector_top_k: retrieval.vector_top_k,
+      rrf_k: retrieval.rrf_k,
+      rerank_top_n: retrieval.rerank_top_n,
     }));
 
     let synthesizer = llm.map(|llm| {
@@ -89,15 +91,19 @@ impl Engine {
 
   // ---- Shared helpers for model loading ----
 
-  fn open_storage(config: &EngineConfig) -> Result<Arc<dyn Storage>> {
-    std::fs::create_dir_all(&config.workspace_path)
+  fn open_storage(workspace_path: &Path) -> Result<Arc<dyn Storage>> {
+    std::fs::create_dir_all(workspace_path)
       .map_err(|e| docq_core::StoreError::Other(format!("create workspace dir: {e}")))?;
-    let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_workspace(&config.workspace_path)?);
+    let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_workspace(workspace_path)?);
     storage.init()?;
     Ok(storage)
   }
 
-  async fn build_chunker(hub: &ModelHub, emb_spec: &ModelSpec) -> Result<Arc<dyn Chunker>> {
+  async fn build_chunker(
+    hub: &ModelHub,
+    emb_spec: &ModelSpec,
+    indexing: &crate::config::IndexingConfig,
+  ) -> Result<Arc<dyn Chunker>> {
     let tokenizer_spec = ModelSpec {
       role: "tokenizer".into(),
       repo_id: emb_spec.repo_id.clone(),
@@ -110,40 +116,46 @@ impl Engine {
       .map_err(|e| docq_core::LlmError::Other(format!("load tokenizer: {e}")))?;
     Ok(Arc::new(SentenceSplitter::new(
       tokenizer,
-      EMBEDDING_MAX_TOKENS,
-      EMBEDDING_MAX_TOKENS / 10,
+      indexing.chunk_size,
+      indexing.chunk_overlap,
     )))
   }
 
-  async fn load_embedding(hub: &ModelHub, storage: &dyn Storage) -> Result<(Arc<dyn Embedder>, Arc<dyn Chunker>)> {
-    let emb_spec = ModelRegistry::default_embedding();
-    hub.ensure(&emb_spec, storage).await?;
-    let embedder = Arc::new(FastEmbedEmbedder::from_model_hub(hub, &emb_spec).await?);
-    let chunker = Self::build_chunker(hub, &emb_spec).await?;
+  async fn load_embedding(
+    hub: &ModelHub,
+    storage: &dyn Storage,
+    spec: &ModelSpec,
+    indexing: &crate::config::IndexingConfig,
+  ) -> Result<(Arc<dyn Embedder>, Arc<dyn Chunker>)> {
+    hub.ensure(spec, storage).await?;
+    let embedder = Arc::new(FastEmbedEmbedder::from_model_hub(hub, spec).await?);
+    let chunker = Self::build_chunker(hub, spec, indexing).await?;
     Ok((embedder, chunker))
   }
 
-  async fn load_reranker(hub: &ModelHub, storage: &dyn Storage) -> Result<Arc<dyn Reranker>> {
-    let spec = ModelRegistry::default_reranker();
-    hub.ensure(&spec, storage).await?;
-    Ok(Arc::new(FastEmbedReranker::from_model_hub(hub, &spec).await?))
+  async fn load_reranker(hub: &ModelHub, storage: &dyn Storage, spec: &ModelSpec) -> Result<Arc<dyn Reranker>> {
+    hub.ensure(spec, storage).await?;
+    Ok(Arc::new(FastEmbedReranker::from_model_hub(hub, spec).await?))
   }
 
-  async fn load_llm(hub: &ModelHub, storage: &dyn Storage) -> Result<Arc<dyn Llm>> {
-    let spec = ModelRegistry::default_llm();
-    hub.ensure(&spec, storage).await?;
-    Ok(Arc::new(
-      GgufLlm::from_model_hub(hub, &spec, &LlmConfig::default()).await?,
-    ))
+  async fn load_llm(hub: &ModelHub, storage: &dyn Storage, spec: &ModelSpec, llm: &LlmConfig) -> Result<Arc<dyn Llm>> {
+    hub.ensure(spec, storage).await?;
+    Ok(Arc::new(GgufLlm::from_model_hub(hub, spec, llm).await?))
   }
 
   // ---- On-demand open methods ----
 
   /// Open for indexing: loads embedding model only (~100 MB).
   pub async fn open_for_index(config: EngineConfig) -> Result<Self> {
-    let storage = Self::open_storage(&config)?;
-    let hub = ModelHub::new(config.model_cache_dir);
-    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref()).await?;
+    let EngineConfig {
+      workspace_path,
+      model_cache_dir,
+      config,
+    } = config;
+    let storage = Self::open_storage(&workspace_path)?;
+    let hub = ModelHub::new(model_cache_dir);
+    let emb_spec = config.models.embedding.to_spec("embedding");
+    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?;
 
     Ok(Self::new(EngineComponents {
       storage,
@@ -153,15 +165,23 @@ impl Engine {
       reranker: None,
       llm: None,
       reader: TextReader::new(),
+      retrieval: config.retrieval.clone(),
     }))
   }
 
   /// Open for search: loads embedding + reranker models (~1.1 GB).
   pub async fn open_for_search(config: EngineConfig) -> Result<Self> {
-    let storage = Self::open_storage(&config)?;
-    let hub = ModelHub::new(config.model_cache_dir);
-    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref()).await?;
-    let reranker = Self::load_reranker(&hub, storage.as_ref()).await?;
+    let EngineConfig {
+      workspace_path,
+      model_cache_dir,
+      config,
+    } = config;
+    let storage = Self::open_storage(&workspace_path)?;
+    let hub = ModelHub::new(model_cache_dir);
+    let emb_spec = config.models.embedding.to_spec("embedding");
+    let rerank_spec = config.models.reranker.to_spec("reranker");
+    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?;
+    let reranker = Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?;
 
     Ok(Self::new(EngineComponents {
       storage,
@@ -171,16 +191,26 @@ impl Engine {
       reranker: Some(reranker),
       llm: None,
       reader: TextReader::new(),
+      retrieval: config.retrieval.clone(),
     }))
   }
 
   /// Open for ask: loads all models (~6 GB).
   pub async fn open_for_ask(config: EngineConfig) -> Result<Self> {
-    let storage = Self::open_storage(&config)?;
-    let hub = ModelHub::new(config.model_cache_dir);
-    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref()).await?;
-    let reranker = Self::load_reranker(&hub, storage.as_ref()).await?;
-    let llm = Self::load_llm(&hub, storage.as_ref()).await?;
+    let EngineConfig {
+      workspace_path,
+      model_cache_dir,
+      config,
+    } = config;
+    let storage = Self::open_storage(&workspace_path)?;
+    let hub = ModelHub::new(model_cache_dir);
+    let emb_spec = config.models.embedding.to_spec("embedding");
+    let rerank_spec = config.models.reranker.to_spec("reranker");
+    let llm_spec = config.models.llm.to_spec("chat");
+    let llm_config: LlmConfig = config.llm.clone().try_into()?;
+    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?;
+    let reranker = Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?;
+    let llm = Self::load_llm(&hub, storage.as_ref(), &llm_spec, &llm_config).await?;
 
     Ok(Self::new(EngineComponents {
       storage,
@@ -190,6 +220,7 @@ impl Engine {
       reranker: Some(reranker),
       llm: Some(llm),
       reader: TextReader::new(),
+      retrieval: config.retrieval.clone(),
     }))
   }
 
@@ -321,6 +352,12 @@ mod tests {
       reranker: None,
       llm: Some(Arc::new(StubLlm)),
       reader: TextReader::new(),
+      retrieval: crate::config::RetrievalConfig {
+        bm25_top_k: 100,
+        vector_top_k: 100,
+        rrf_k: 60,
+        rerank_top_n: 20,
+      },
     }
   }
 
@@ -387,6 +424,12 @@ mod tests {
       reranker: None,
       llm: None,
       reader: TextReader::new(),
+      retrieval: crate::config::RetrievalConfig {
+        bm25_top_k: 100,
+        vector_top_k: 100,
+        rrf_k: 60,
+        rerank_top_n: 20,
+      },
     };
     let engine = Engine::new(components);
     let result = engine.ask("test").await;

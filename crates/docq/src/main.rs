@@ -1,6 +1,9 @@
+mod config;
 mod engine;
 
 use std::path::{Path, PathBuf};
+
+use config::DocqConfig;
 
 use clap::{Parser, Subcommand};
 use docq_core::Storage;
@@ -76,7 +79,25 @@ enum Commands {
 }
 
 fn default_workspace() -> PathBuf {
-  dirs::home_dir().unwrap_or_default().join(".docq")
+  // Use XDG-style config directories on Unix and the standard local app data
+  // directory on Windows. This keeps the workspace (config.toml + docq.db) in
+  // the conventional per-platform config location.
+  #[cfg(target_os = "macos")]
+  {
+    dirs::home_dir().unwrap_or_default().join(".config").join("docq")
+  }
+  #[cfg(target_os = "linux")]
+  {
+    dirs::config_dir().unwrap_or_default().join("docq")
+  }
+  #[cfg(target_os = "windows")]
+  {
+    dirs::config_local_dir().unwrap_or_default().join("docq")
+  }
+  #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+  {
+    dirs::home_dir().unwrap_or_default().join(".docq")
+  }
 }
 
 fn default_model_cache() -> PathBuf {
@@ -122,6 +143,10 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
       let storage = docq_storage::SqliteStorage::open_workspace(workspace)?;
       use docq_core::Storage;
       storage.init()?;
+      let config = DocqConfig::default();
+      let config_path = DocqConfig::path(workspace);
+      std::fs::write(&config_path, config.to_toml()?)
+        .map_err(|e| anyhow::anyhow!("write default config {}: {e}", config_path.display()))?;
       println!("Initialized workspace at {}", workspace.display());
     }
 
@@ -161,7 +186,8 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
     }
 
     Commands::Index { collection } => {
-      let engine = Engine::open_for_index(engine_config(workspace, model_cache)).await?;
+      let config = DocqConfig::load(workspace)?;
+      let engine = Engine::open_for_index(engine_config(workspace, model_cache, config)).await?;
       let stats = if let Some(name) = collection {
         engine.index_one(name).await?
       } else {
@@ -179,7 +205,8 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
       explain,
       json,
     } => {
-      let engine = Engine::open_for_search(engine_config(workspace, model_cache)).await?;
+      let config = DocqConfig::load(workspace)?;
+      let engine = Engine::open_for_search(engine_config(workspace, model_cache, config)).await?;
       let hits = engine.search(query, *top_k).await?;
 
       if *json {
@@ -215,7 +242,8 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path) -> an
     }
 
     Commands::Ask { query, json } => {
-      let engine = Engine::open_for_ask(engine_config(workspace, model_cache)).await?;
+      let config = DocqConfig::load(workspace)?;
+      let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config)).await?;
       let answer = engine.ask(query).await?;
 
       if *json {
@@ -240,9 +268,10 @@ fn open_storage(workspace: &Path) -> anyhow::Result<docq_storage::SqliteStorage>
   Ok(storage)
 }
 
-fn engine_config(workspace: &Path, model_cache: &Path) -> EngineConfig {
+fn engine_config(workspace: &Path, model_cache: &Path, config: DocqConfig) -> EngineConfig {
   EngineConfig {
     workspace_path: workspace.to_path_buf(),
     model_cache_dir: model_cache.to_path_buf(),
+    config,
   }
 }

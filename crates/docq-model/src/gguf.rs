@@ -42,7 +42,7 @@ impl GgufLlm {
 impl Llm for GgufLlm {
   async fn complete(&self, prompt: &str) -> Result<String> {
     let messages = [
-      LlamaChatMessage::new("system".into(), "You are a helpful assistant.".into())
+      LlamaChatMessage::new("system".into(), self.config.system_prompt.clone())
         .map_err(|e| LlmError::Other(format!("create system message: {e}")))?,
       LlamaChatMessage::new("user".into(), prompt.to_string())
         .map_err(|e| LlmError::Other(format!("create user message: {e}")))?,
