@@ -11,9 +11,10 @@ pub use gguf::GgufLlm;
 pub use hub::ModelHub;
 pub use registry::ModelRegistry;
 pub use registry::{
-  EMBEDDING_FILE, EMBEDDING_MAX_TOKENS, EMBEDDING_REPO, EMBEDDING_REPO_BGE_LARGE_ZH, EMBEDDING_REPO_BGE_M3,
-  EMBEDDING_TOKENIZER_FILE, LLM_FILE, LLM_REPO, RERANKER_FILE, RERANKER_REPO, RERANKER_REPO_BGE_V2_M3,
-  RERANKER_REPO_BGE_V2_M3_ALT, RERANKER_REPO_JINA_V1_TURBO_EN, RERANKER_REPO_JINA_V2_MULTILINGUAL,
+  BGE_RERANKER_BASE_FILE, BGE_RERANKER_BASE_REPO, BGE_SMALL_ZH_V1_5_FILE, BGE_SMALL_ZH_V1_5_MAX_TOKENS,
+  BGE_SMALL_ZH_V1_5_REPO, BGE_SMALL_ZH_V1_5_TOKENIZER_FILE, EMBEDDING_REPO_BGE_LARGE_ZH, EMBEDDING_REPO_BGE_M3,
+  QWEN2_5_3B_INSTRUCT_GGUF_REPO, QWEN2_5_3B_INSTRUCT_Q4_K_M_FILE, RERANKER_REPO_BGE_V2_M3, RERANKER_REPO_BGE_V2_M3_ALT,
+  RERANKER_REPO_JINA_V1_TURBO_EN, RERANKER_REPO_JINA_V2_MULTILINGUAL,
 };
 pub use rerank::FastEmbedReranker;
 
@@ -48,7 +49,7 @@ mod tests {
   async fn test_registry_defaults() {
     let emb = ModelRegistry::default_embedding();
     assert_eq!(emb.role, "embedding");
-    assert_eq!(emb.repo_id, EMBEDDING_REPO);
+    assert_eq!(emb.repo_id, BGE_SMALL_ZH_V1_5_REPO);
 
     let rnk = ModelRegistry::default_reranker();
     assert_eq!(rnk.role, "reranker");
@@ -96,7 +97,7 @@ mod tests {
 
     let embedder = FastEmbedEmbedder::from_model_hub(&hub, &spec).await.unwrap();
     assert_eq!(embedder.dimension(), 512);
-    assert_eq!(embedder.model_name(), EMBEDDING_REPO);
+    assert_eq!(embedder.model_name(), BGE_SMALL_ZH_V1_5_REPO);
 
     let texts = vec!["你好".to_string(), "世界".to_string()];
     let embs = embedder.embed(&texts).await.unwrap();

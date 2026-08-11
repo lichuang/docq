@@ -8,7 +8,7 @@ use docq_core::{
   WordSegmenter,
 };
 use docq_indexer::{IndexStats, Indexer, IndexerConfig, JiebaSegmenter, SentenceSplitter, TextReader};
-use docq_model::{EMBEDDING_TOKENIZER_FILE, FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
+use docq_model::{BGE_SMALL_ZH_V1_5_TOKENIZER_FILE, FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
 use docq_retrieve::{Retriever, RetrieverConfig};
 
 use crate::config::{DocqConfig, RetrievalConfig};
@@ -107,7 +107,7 @@ impl Engine {
     let tokenizer_spec = ModelSpec {
       role: "tokenizer".into(),
       repo_id: emb_spec.repo_id.clone(),
-      filename: EMBEDDING_TOKENIZER_FILE.into(),
+      filename: BGE_SMALL_ZH_V1_5_TOKENIZER_FILE.into(),
       revision: emb_spec.revision.clone(),
       checksum: None,
     };

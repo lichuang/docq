@@ -92,8 +92,8 @@ pub struct DocqConfig {
 impl Default for ModelEntry {
   fn default() -> Self {
     Self {
-      repo_id: docq_model::EMBEDDING_REPO.into(),
-      filename: docq_model::EMBEDDING_FILE.into(),
+      repo_id: docq_model::BGE_SMALL_ZH_V1_5_REPO.into(),
+      filename: docq_model::BGE_SMALL_ZH_V1_5_FILE.into(),
       revision: "main".into(),
     }
   }
@@ -103,18 +103,18 @@ impl Default for ModelsConfig {
   fn default() -> Self {
     Self {
       embedding: ModelEntry {
-        repo_id: docq_model::EMBEDDING_REPO.into(),
-        filename: docq_model::EMBEDDING_FILE.into(),
+        repo_id: docq_model::BGE_SMALL_ZH_V1_5_REPO.into(),
+        filename: docq_model::BGE_SMALL_ZH_V1_5_FILE.into(),
         revision: "main".into(),
       },
       reranker: ModelEntry {
-        repo_id: docq_model::RERANKER_REPO.into(),
-        filename: docq_model::RERANKER_FILE.into(),
+        repo_id: docq_model::BGE_RERANKER_BASE_REPO.into(),
+        filename: docq_model::BGE_RERANKER_BASE_FILE.into(),
         revision: "main".into(),
       },
       llm: ModelEntry {
-        repo_id: docq_model::LLM_REPO.into(),
-        filename: docq_model::LLM_FILE.into(),
+        repo_id: docq_model::QWEN2_5_3B_INSTRUCT_GGUF_REPO.into(),
+        filename: docq_model::QWEN2_5_3B_INSTRUCT_Q4_K_M_FILE.into(),
         revision: "main".into(),
       },
     }
@@ -124,8 +124,8 @@ impl Default for ModelsConfig {
 impl Default for IndexingConfig {
   fn default() -> Self {
     Self {
-      chunk_size: docq_model::EMBEDDING_MAX_TOKENS,
-      chunk_overlap: docq_model::EMBEDDING_MAX_TOKENS / 10,
+      chunk_size: docq_model::BGE_SMALL_ZH_V1_5_MAX_TOKENS,
+      chunk_overlap: docq_model::BGE_SMALL_ZH_V1_5_MAX_TOKENS / 10,
     }
   }
 }
@@ -197,6 +197,6 @@ mod tests {
   fn test_load_missing_returns_default() {
     let tmp = TempDir::new().unwrap();
     let config = DocqConfig::load(tmp.path()).unwrap();
-    assert_eq!(config.indexing.chunk_size, docq_model::EMBEDDING_MAX_TOKENS);
+    assert_eq!(config.indexing.chunk_size, docq_model::BGE_SMALL_ZH_V1_5_MAX_TOKENS);
   }
 }

@@ -4,8 +4,8 @@ use docq_core::{Chunk, ModelError, ModelSpec, Reranker, Result, RetrieveError, S
 use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
 
 use crate::{
-  ModelHub, RERANKER_REPO, RERANKER_REPO_BGE_V2_M3, RERANKER_REPO_BGE_V2_M3_ALT, RERANKER_REPO_JINA_V1_TURBO_EN,
-  RERANKER_REPO_JINA_V2_MULTILINGUAL,
+  BGE_RERANKER_BASE_REPO, ModelHub, RERANKER_REPO_BGE_V2_M3, RERANKER_REPO_BGE_V2_M3_ALT,
+  RERANKER_REPO_JINA_V1_TURBO_EN, RERANKER_REPO_JINA_V2_MULTILINGUAL,
 };
 
 pub struct FastEmbedReranker {
@@ -31,7 +31,7 @@ impl FastEmbedReranker {
 
 fn reranker_model_for(repo_id: &str) -> Result<RerankerModel> {
   match repo_id {
-    RERANKER_REPO => Ok(RerankerModel::BGERerankerBase),
+    BGE_RERANKER_BASE_REPO => Ok(RerankerModel::BGERerankerBase),
     RERANKER_REPO_BGE_V2_M3 | RERANKER_REPO_BGE_V2_M3_ALT => Ok(RerankerModel::BGERerankerV2M3),
     RERANKER_REPO_JINA_V1_TURBO_EN => Ok(RerankerModel::JINARerankerV1TurboEn),
     RERANKER_REPO_JINA_V2_MULTILINGUAL => Ok(RerankerModel::JINARerankerV2BaseMultiligual),
@@ -76,7 +76,7 @@ mod tests {
     let spec = crate::ModelRegistry::default_reranker();
 
     let reranker = FastEmbedReranker::from_model_hub(&hub, &spec).await.unwrap();
-    assert_eq!(reranker.model_name(), crate::RERANKER_REPO);
+    assert_eq!(reranker.model_name(), crate::BGE_RERANKER_BASE_REPO);
 
     let chunks = vec![
       Chunk {

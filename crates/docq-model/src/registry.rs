@@ -1,28 +1,28 @@
 use docq_core::ModelSpec;
 
-// ---- Default embedding model ----
+// ---- Default embedding model: Xenova/bge-small-zh-v1.5 ----
 
-pub const EMBEDDING_REPO: &str = "Xenova/bge-small-zh-v1.5";
-pub const EMBEDDING_FILE: &str = "onnx/model.onnx";
+pub const BGE_SMALL_ZH_V1_5_REPO: &str = "Xenova/bge-small-zh-v1.5";
+pub const BGE_SMALL_ZH_V1_5_FILE: &str = "onnx/model.onnx";
 /// Tokenizer file co-located in the same HF repo as the embedding model.
-pub const EMBEDDING_TOKENIZER_FILE: &str = "tokenizer.json";
+pub const BGE_SMALL_ZH_V1_5_TOKENIZER_FILE: &str = "tokenizer.json";
 /// Maximum input length the embedding model accepts. Chunks exceeding this
 /// are silently truncated by the ONNX runtime, so `SentenceSplitter` must
 /// use this as `chunk_size` to avoid losing tail content.
-pub const EMBEDDING_MAX_TOKENS: usize = 512;
+pub const BGE_SMALL_ZH_V1_5_MAX_TOKENS: usize = 512;
 
-// ---- Default reranker model ----
+// ---- Default reranker model: BAAI/bge-reranker-base ----
 
-pub const RERANKER_REPO: &str = "BAAI/bge-reranker-base";
-pub const RERANKER_FILE: &str = "onnx/model.onnx";
+pub const BGE_RERANKER_BASE_REPO: &str = "BAAI/bge-reranker-base";
+pub const BGE_RERANKER_BASE_FILE: &str = "onnx/model.onnx";
 
-// ---- Default LLM model ----
+// ---- Default LLM model: Qwen/Qwen2.5-3B-Instruct-GGUF ----
 // Qwen2.5-3B is a good default: small enough to load quickly on consumer
 // hardware (~1.9 GB for q4_k_m) while still useful for RAG answers. The
 // official repo provides an un-split q4_k_m file, so the single-filename
 // loader works out of the box.
-pub const LLM_REPO: &str = "Qwen/Qwen2.5-3B-Instruct-GGUF";
-pub const LLM_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
+pub const QWEN2_5_3B_INSTRUCT_GGUF_REPO: &str = "Qwen/Qwen2.5-3B-Instruct-GGUF";
+pub const QWEN2_5_3B_INSTRUCT_Q4_K_M_FILE: &str = "qwen2.5-3b-instruct-q4_k_m.gguf";
 
 // ---- Other supported embedding repos (for repo_id → fastembed mapping) ----
 
@@ -43,8 +43,8 @@ impl ModelRegistry {
   pub fn default_embedding() -> ModelSpec {
     ModelSpec {
       role: "embedding".into(),
-      repo_id: EMBEDDING_REPO.into(),
-      filename: EMBEDDING_FILE.into(),
+      repo_id: BGE_SMALL_ZH_V1_5_REPO.into(),
+      filename: BGE_SMALL_ZH_V1_5_FILE.into(),
       revision: "main".into(),
       checksum: None,
     }
@@ -53,8 +53,8 @@ impl ModelRegistry {
   pub fn default_reranker() -> ModelSpec {
     ModelSpec {
       role: "reranker".into(),
-      repo_id: RERANKER_REPO.into(),
-      filename: RERANKER_FILE.into(),
+      repo_id: BGE_RERANKER_BASE_REPO.into(),
+      filename: BGE_RERANKER_BASE_FILE.into(),
       revision: "main".into(),
       checksum: None,
     }
@@ -63,8 +63,8 @@ impl ModelRegistry {
   pub fn default_llm() -> ModelSpec {
     ModelSpec {
       role: "chat".into(),
-      repo_id: LLM_REPO.into(),
-      filename: LLM_FILE.into(),
+      repo_id: QWEN2_5_3B_INSTRUCT_GGUF_REPO.into(),
+      filename: QWEN2_5_3B_INSTRUCT_Q4_K_M_FILE.into(),
       revision: "main".into(),
       checksum: None,
     }
