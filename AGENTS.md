@@ -1,6 +1,6 @@
 # AGENTS.md — Navigation for Coding Agents
 
-> This file is a navigation guide for coding agents (such as Claude/Sisyphus) working on this repository. Read it first, then consult `docs/phase.md` for per-phase tasks.
+> This file is a navigation guide for coding agents working on this repository. Read it first.
 
 ## What is docq
 
@@ -10,22 +10,7 @@
 - All indexes live in a single SQLite file (`sqlite-vec` + `FTS5` + plain tables); the whole pipeline works offline.
 - Chinese-optimized: chunking replicates LlamaIndex's `SentenceSplitter`; BM25 uses jieba word-level pre-tokenization.
 
-See `README.md` for the vision, `docs/design.md` for the authoritative design, and `docs/phase.md` for the phased task list.
-
-## Current progress
-
-See the overview table at the top of `docs/phase.md` (each phase has ✅ / ⬜). Current state:
-
-| Phase | Status |
-|---|---|
-| P0 technical validation | ✅ done (verified by user; POC code not in repo) |
-| P1 Workspace + Core types/traits | ✅ done |
-| P2 Storage trait + SQLite basics | ✅ done (no InMemoryStorage — removed) |
-| P3.1 sqlite-vec integration | ✅ done |
-| P3.2 FTS5 integration | ✅ done |
-| P3.3 Transactional consistency (StorageTx) | ✅ done |
-| P12 CLI | ✅ done |
-| P13 | ⬜ pending |
+See `README.md` for the project overview.
 
 ## Common commands
 
@@ -79,7 +64,7 @@ cargo clippy --all-features -- -D warnings
 | `docq-storage` | SQLite `Storage` impl: documents / chunks / `vec_chunks` (sqlite-vec) / `fts_chunks` (FTS5) / model_versions | core |
 | `docq-retrieve` | BM25 + vector recall → RRF fusion → rerank; returns `SearchHit` + `ScoreExplain` | core + storage + model(rerank) |
 | `docq-synth` | Ask: build prompt → LLM → parse `[N]` citations → `Answer` | core + retrieve + model(llm) |
-| `docq` | CLI binary (currently empty shell, implemented in P12) | all of the above |
+| `docq` | CLI binary and `Engine` facade; exposes `init/add/index/search/ask/status` plus `Engine` for library users | all of the above |
 
 ### Layering rules (important — do not break)
 
@@ -93,7 +78,7 @@ cargo clippy --all-features -- -D warnings
 
 1. **The `Storage` trait stays in `docq-core`**, not in `docq-storage`. This is dependency inversion: `indexer` and `retrieve` only need `docq-core` + `docq-model` and do not pull `rusqlite`/`sqlite-vec` at compile time. A future `docq-storage-pg` would be a drop-in replacement.
 2. **No `InMemoryStorage`**. Tests use `SqliteStorage::open_in_memory()` (SQLite `:memory:` mode, millisecond startup).
-3. **`chunks.text` is the original text; `fts_chunks.text` is the jieba-tokenized space-joined text**. `StorageTx::add_fts_chunks(chunk_ids, tokenized_texts)` writes to the FTS table separately — `add_chunks` only writes the `chunks` table. This is an explicit decision in phase.md P3.2; the P6 indexer will call both methods inside one `begin_tx` / `commit` bracket.
+3. **`chunks.text` is the original text; `fts_chunks.text` is the jieba-tokenized space-joined text**. `StorageTx::add_fts_chunks(chunk_ids, tokenized_texts)` writes to the FTS table separately — `add_chunks` only writes the `chunks` table. `IndexTx` calls both methods inside one `begin_tx` / `commit` bracket.
 4. **All mutations flow through `StorageTx`** — `Storage` is read-only (queries + `init` + `begin_tx`). This enforces transactional writes at the type level: `docq-retrieve` holds `&Storage` and cannot write; `docq-indexer` holds `&mut dyn StorageTx` and all four indexed tables (`documents` / `chunks` / `vec_chunks` / `fts_chunks`) plus `model_versions` commit atomically, so a re-embedding failure cannot leave the store half-written.
 5. **`Document.id` is the file-relative path** — renaming the file triggers a reindex, keeping the logic simple.
 6. **`Chunk.id` is the SHA-256 of `text`** — naturally enables content-addressed dedup and change detection.
@@ -108,7 +93,7 @@ cargo clippy --all-features -- -D warnings
 - Error types use `thiserror`; do not hand-write `Display`.
 - Async traits use `#[async_trait]`.
 - Public APIs get short rustdoc (one-line `//!` module description + field comments only for non-obvious conventions, e.g. "SHA-256 of `text`", "RFC3339 UTC").
-- **Never** use type-erasure shims like `as any` / `@ts-ignore` (TS concepts). The Rust equivalents are `unimplemented!()` / `todo!()` — only allowed in stub methods that are clearly annotated "to be implemented in P3", and must be removed before commit.
+- **Never** use type-erasure shims like `as any` / `@ts-ignore` (TS concepts). The Rust equivalents are `unimplemented!()` / `todo!()` — only allowed in temporary stub methods, and must be removed before commit.
 - **No deep-path references in code**: types like `docq_core::EmbedError::Other` must be flattened to `EmbedError::Other` via `use` at the top of the file. Never nest more than two `::` levels inline — import the item and use the short name. This keeps lines short and makes dependencies explicit at the file top.
 
 ## Commit conventions
@@ -117,13 +102,14 @@ cargo clippy --all-features -- -D warnings
 feat: add sqlite-vec integration
 fix: handle missing model file in ModelHub
 refactor: split Storage trait into sync methods
-doc: update phase.md status after P2 completion
+doc: update README usage examples
 ```
 
-Before your first commit, read the "Appendix: development conventions" section in `docs/phase.md`. After completing a phase, make sure:
+Before committing, make sure:
 1. `cargo check --workspace` passes.
-2. New tests for the phase pass.
-3. The `docs/phase.md` status column is updated (change ⬜ to ✅).
+2. New tests pass.
+3. `cargo clippy --all-features -- -D warnings` passes.
+4. `cargo fmt --all -- --check` passes.
 
 ## Testing conventions
 
@@ -144,7 +130,7 @@ Before your first commit, read the "Appendix: development conventions" section i
 |---|---|
 | Add a new Storage backend (e.g. PostgreSQL) | `docq-core`'s `Storage` trait + existing `SqliteStorage` as reference |
 | Add a new embedding/rerank/LLM backend | `docq-core`'s corresponding trait + `docq-model`'s `fastembed`/`llama-cpp-2` implementations |
-| Add a new file format (PDF/xlsx/docx) | `docq-indexer`'s `reader.rs` (P5); add a feature flag for each new extractor |
-| Add a CLI subcommand | `docq` crate's `src/main.rs`, using clap derive (P12) |
+| Add a new file format (PDF/xlsx/docx) | `docq-indexer`'s `reader.rs`; add a feature flag for each new extractor |
+| Add a CLI subcommand | `docq` crate's `src/main.rs`, using clap derive |
 | Change the schema | `SqliteStorage::init()`'s `execute_batch` + related CRUD methods; consider a migration path. For v0.1 a simple breaking change is fine. |
 | Add a unit test | Same module as the code under test, in `#[cfg(test)] mod tests`; see the existing 5 tests in `sqlite.rs` for reference |

@@ -168,8 +168,8 @@ impl Storage for SqliteStorage {
        CREATE TABLE IF NOT EXISTS chunks (
          -- Text block produced by the Chunker; `text` is the exact string embedded.
          -- chunk_id is the SHA-256 of `text`, so identical content is stored once.
-         -- P3 will add parallel `vec_chunks` (sqlite-vec) and `fts_chunks` (FTS5) tables
-         -- keyed by the same chunk_id.
+         -- Parallel `vec_chunks` (sqlite-vec) and `fts_chunks` (FTS5) tables
+         -- are keyed by the same chunk_id.
          chunk_id   TEXT PRIMARY KEY,  -- SHA-256 of `text`; content-addressed dedup
          doc_id     TEXT NOT NULL,     -- FK -> documents.doc_id
          text       TEXT NOT NULL,     -- full original text actually embedded
