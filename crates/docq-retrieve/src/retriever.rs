@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use docq_core::{
-  Chunk, EmbedError, Embedder, Reranker, Result, ScoreExplain, ScoredChunk, SearchHit, Storage, WordSegmenter,
+  Chunk, EmbedError, Embedder, Reranker, Result, ScoreExplain, ScoredChunk, SearchHit, Storage, Verbose, WordSegmenter,
 };
 
 use crate::fusion;
@@ -22,6 +22,8 @@ pub struct RetrieverConfig {
   pub rrf_k: usize,
   /// Number of RRF results to rerank (default 20).
   pub rerank_top_n: usize,
+  /// Whether to print per-step progress and timings.
+  pub verbose: Verbose,
 }
 
 pub struct Retriever {
@@ -48,26 +50,40 @@ impl Retriever {
       return Ok(Vec::new());
     }
 
+    let _total = self.config.verbose.start("search");
+
     // ---- Channel 1: BM25 lexical recall ----
     // Index time stored jieba-segmented text; query must be segmented the same
     // way so FTS5 matches on the same token boundaries.
-    let segmented_query = self.config.segmenter.segment(query);
-    let bm25_results = self.config.storage.search_text(&segmented_query, self.config.bm25_top_k)?;
+    let segmented_query = {
+      let _step = self.config.verbose.start("segment query");
+      self.config.segmenter.segment(query)
+    };
+    let bm25_results = {
+      let _step = self.config.verbose.start("BM25 recall");
+      self.config.storage.search_text(&segmented_query, self.config.bm25_top_k)?
+    };
 
     // ---- Channel 2: vector semantic recall ----
     // Embed the query, then KNN-search sqlite-vec which returns cosine
     // *distance* (lower = more similar). Convert to similarity so every
     // score in ScoreExplain follows the same "higher is better" convention.
-    let query_embedding = self
-      .config
-      .embedder
-      .embed(&[query.to_string()])
-      .await?
-      .into_iter()
-      .next()
-      .ok_or_else(|| EmbedError::Other("empty embedding result".into()))?;
+    let query_embedding = {
+      let _step = self.config.verbose.start("embed query");
+      self
+        .config
+        .embedder
+        .embed(&[query.to_string()])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| EmbedError::Other("empty embedding result".into()))?
+    };
 
-    let vector_raw = self.config.storage.search_vectors(&query_embedding, self.config.vector_top_k)?;
+    let vector_raw = {
+      let _step = self.config.verbose.start("vector recall");
+      self.config.storage.search_vectors(&query_embedding, self.config.vector_top_k)?
+    };
     let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
     let vector_map: HashMap<String, f32> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
 
@@ -76,7 +92,10 @@ impl Retriever {
     // difference between BM25 (higher better) and distance (lower better)
     // does not affect fusion. Pass the original score vectors; fusion
     // ignores their values and uses rank only.
-    let fused = fusion::reciprocal_rank_fusion(&bm25_results, &vector_raw, self.config.rrf_k);
+    let fused = {
+      let _step = self.config.verbose.start("RRF fusion");
+      fusion::reciprocal_rank_fusion(&bm25_results, &vector_raw, self.config.rrf_k)
+    };
     if fused.is_empty() {
       return Ok(Vec::new());
     }
@@ -102,7 +121,10 @@ impl Retriever {
         let chunk_map: HashMap<String, Chunk> = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
 
         let rerank_chunks: Vec<Chunk> = ids.iter().filter_map(|id| chunk_map.get(id).cloned()).collect();
-        let scored: Vec<ScoredChunk> = reranker.rerank(query, &rerank_chunks).await?;
+        let scored: Vec<ScoredChunk> = {
+          let _step = self.config.verbose.start("rerank");
+          reranker.rerank(query, &rerank_chunks).await?
+        };
         let rerank_map: HashMap<String, f32> = scored.into_iter().map(|sc| (sc.chunk.id, sc.score)).collect();
 
         let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.config.rerank_top_n).collect();
@@ -117,27 +139,30 @@ impl Retriever {
     };
 
     // ---- Assemble SearchHit with per-stage ScoreExplain ----
-    let hits = ordered
-      .into_iter()
-      .take(top_k)
-      .filter_map(|(id, _)| {
-        let chunk = chunk_map.get(&id)?;
-        let rrf_score = rrf_map.get(&id).copied();
-        let rerank_score = rerank_map.get(&id).copied();
-        let final_score = rerank_score.or(rrf_score).unwrap_or(0.0);
-        Some(SearchHit {
-          chunk: chunk.clone(),
-          score: final_score,
-          explain: ScoreExplain {
-            bm25_score: bm25_map.get(&id).copied(),
-            vector_score: vector_map.get(&id).copied(),
-            rrf_score,
-            rerank_score,
-            final_score,
-          },
+    let hits = {
+      let _step = self.config.verbose.start("assemble hits");
+      ordered
+        .into_iter()
+        .take(top_k)
+        .filter_map(|(id, _)| {
+          let chunk = chunk_map.get(&id)?;
+          let rrf_score = rrf_map.get(&id).copied();
+          let rerank_score = rerank_map.get(&id).copied();
+          let final_score = rerank_score.or(rrf_score).unwrap_or(0.0);
+          Some(SearchHit {
+            chunk: chunk.clone(),
+            score: final_score,
+            explain: ScoreExplain {
+              bm25_score: bm25_map.get(&id).copied(),
+              vector_score: vector_map.get(&id).copied(),
+              rrf_score,
+              rerank_score,
+              final_score,
+            },
+          })
         })
-      })
-      .collect();
+        .collect()
+    };
 
     Ok(hits)
   }
@@ -203,6 +228,7 @@ mod tests {
         segmenter: Arc::new(JiebaSegmenter),
         storage: storage.clone(),
         reader: TextReader::new(),
+        verbose: Verbose(false),
       });
       indexer.index_file(&path).await.unwrap();
     }
@@ -224,6 +250,7 @@ mod tests {
       vector_top_k: 100,
       rrf_k: 60,
       rerank_top_n: 20,
+      verbose: Verbose(false),
     })
   }
 
@@ -255,6 +282,7 @@ mod tests {
       vector_top_k: 100,
       rrf_k: 60,
       rerank_top_n: 20,
+      verbose: Verbose(false),
     })
   }
 

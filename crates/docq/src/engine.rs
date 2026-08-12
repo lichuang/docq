@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use docq_core::{
   Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelSpec, Reranker, Result, SearchHit, Storage,
-  WordSegmenter,
+  Verbose, WordSegmenter,
 };
 use docq_indexer::{IndexStats, Indexer, IndexerConfig, JiebaSegmenter, SentenceSplitter, TextReader};
 use docq_model::{BGE_SMALL_ZH_V1_5_TOKENIZER_FILE, FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
@@ -19,6 +19,7 @@ pub struct EngineConfig {
   pub workspace_path: PathBuf,
   pub model_cache_dir: PathBuf,
   pub config: DocqConfig,
+  pub verbose: Verbose,
 }
 
 /// Pre-built components for `Engine::new` (dependency injection).
@@ -33,6 +34,7 @@ pub struct EngineComponents {
   pub llm: Option<Arc<dyn Llm>>,
   pub reader: TextReader,
   pub retrieval: RetrievalConfig,
+  pub verbose: Verbose,
 }
 
 pub struct Engine {
@@ -40,6 +42,7 @@ pub struct Engine {
   indexer: Indexer,
   retriever: Arc<Retriever>,
   synthesizer: Option<Synthesizer>,
+  verbose: Verbose,
 }
 
 impl Engine {
@@ -53,6 +56,7 @@ impl Engine {
       llm,
       reader,
       retrieval,
+      verbose,
     } = components;
 
     let indexer = Indexer::new(IndexerConfig {
@@ -61,6 +65,7 @@ impl Engine {
       segmenter: segmenter.clone(),
       storage: storage.clone(),
       reader,
+      verbose,
     });
 
     let retriever = Arc::new(Retriever::new(RetrieverConfig {
@@ -72,12 +77,14 @@ impl Engine {
       vector_top_k: retrieval.vector_top_k,
       rrf_k: retrieval.rrf_k,
       rerank_top_n: retrieval.rerank_top_n,
+      verbose,
     }));
 
     let synthesizer = llm.map(|llm| {
       Synthesizer::new(SynthesizerConfig {
         retriever: retriever.clone(),
         llm,
+        verbose,
       })
     });
 
@@ -86,6 +93,7 @@ impl Engine {
       indexer,
       retriever,
       synthesizer,
+      verbose,
     }
   }
 
@@ -151,11 +159,15 @@ impl Engine {
       workspace_path,
       model_cache_dir,
       config,
+      verbose,
     } = config;
     let storage = Self::open_storage(&workspace_path)?;
     let hub = ModelHub::new(model_cache_dir);
     let emb_spec = config.models.embedding.to_spec("embedding");
-    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?;
+    let (embedder, chunker) = {
+      let _step = verbose.start("load embedding model");
+      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?
+    };
 
     Ok(Self::new(EngineComponents {
       storage,
@@ -166,6 +178,7 @@ impl Engine {
       llm: None,
       reader: TextReader::new(),
       retrieval: config.retrieval.clone(),
+      verbose,
     }))
   }
 
@@ -175,13 +188,20 @@ impl Engine {
       workspace_path,
       model_cache_dir,
       config,
+      verbose,
     } = config;
     let storage = Self::open_storage(&workspace_path)?;
     let hub = ModelHub::new(model_cache_dir);
     let emb_spec = config.models.embedding.to_spec("embedding");
     let rerank_spec = config.models.reranker.to_spec("reranker");
-    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?;
-    let reranker = Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?;
+    let (embedder, chunker) = {
+      let _step = verbose.start("load embedding model");
+      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?
+    };
+    let reranker = {
+      let _step = verbose.start("load reranker model");
+      Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?
+    };
 
     Ok(Self::new(EngineComponents {
       storage,
@@ -192,6 +212,7 @@ impl Engine {
       llm: None,
       reader: TextReader::new(),
       retrieval: config.retrieval.clone(),
+      verbose,
     }))
   }
 
@@ -201,6 +222,7 @@ impl Engine {
       workspace_path,
       model_cache_dir,
       config,
+      verbose,
     } = config;
     let storage = Self::open_storage(&workspace_path)?;
     let hub = ModelHub::new(model_cache_dir);
@@ -208,9 +230,18 @@ impl Engine {
     let rerank_spec = config.models.reranker.to_spec("reranker");
     let llm_spec = config.models.llm.to_spec("chat");
     let llm_config: LlmConfig = config.llm.clone().try_into()?;
-    let (embedder, chunker) = Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?;
-    let reranker = Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?;
-    let llm = Self::load_llm(&hub, storage.as_ref(), &llm_spec, &llm_config).await?;
+    let (embedder, chunker) = {
+      let _step = verbose.start("load embedding model");
+      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?
+    };
+    let reranker = {
+      let _step = verbose.start("load reranker model");
+      Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?
+    };
+    let llm = {
+      let _step = verbose.start("load LLM");
+      Self::load_llm(&hub, storage.as_ref(), &llm_spec, &llm_config).await?
+    };
 
     Ok(Self::new(EngineComponents {
       storage,
@@ -221,6 +252,7 @@ impl Engine {
       llm: Some(llm),
       reader: TextReader::new(),
       retrieval: config.retrieval.clone(),
+      verbose,
     }))
   }
 
@@ -239,6 +271,7 @@ impl Engine {
   }
 
   pub async fn index(&self) -> Result<IndexStats> {
+    let _total = self.verbose.start("index");
     let collections = self.storage.list_collections()?;
     let mut stats = IndexStats::default();
     for col in collections {
@@ -249,6 +282,7 @@ impl Engine {
   }
 
   pub async fn index_one(&self, name: &str) -> Result<IndexStats> {
+    let _total = self.verbose.start("index one collection");
     let collections = self.storage.list_collections()?;
     let col = collections
       .into_iter()
@@ -358,6 +392,7 @@ mod tests {
         rrf_k: 60,
         rerank_top_n: 20,
       },
+      verbose: Verbose(false),
     }
   }
 
@@ -430,6 +465,7 @@ mod tests {
         rrf_k: 60,
         rerank_top_n: 20,
       },
+      verbose: Verbose(false),
     };
     let engine = Engine::new(components);
     let result = engine.ask("test").await;

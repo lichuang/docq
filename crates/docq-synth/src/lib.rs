@@ -5,7 +5,7 @@ pub mod prompt;
 
 use std::sync::Arc;
 
-use docq_core::{Answer, Citation, Llm, Result};
+use docq_core::{Answer, Citation, Llm, Result, Verbose};
 
 use citation::parse_citations;
 use prompt::build_ask_prompt;
@@ -13,6 +13,7 @@ use prompt::build_ask_prompt;
 pub struct SynthesizerConfig {
   pub retriever: Arc<docq_retrieve::Retriever>,
   pub llm: Arc<dyn Llm>,
+  pub verbose: Verbose,
 }
 
 pub struct Synthesizer {
@@ -32,8 +33,13 @@ impl Synthesizer {
   /// the markers generated from the retrieved hits. Invalid markers (e.g.
   /// `[3]` when only 2 chunks were retrieved) are silently dropped.
   pub async fn ask(&self, query: &str) -> Result<Answer> {
+    let _total = self.config.verbose.start("ask");
+
     // ---- Retrieve top-5 chunks relevant to the query ----
-    let hits = self.config.retriever.search(query, 5).await?;
+    let hits = {
+      let _step = self.config.verbose.start("retrieve");
+      self.config.retriever.search(query, 5).await?
+    };
     if hits.is_empty() {
       return Ok(Answer {
         text: String::new(),
@@ -44,14 +50,24 @@ impl Synthesizer {
     // ---- Build the prompt with numbered context blocks ----
     // Each hit becomes `[N] doc_id (bytes start-end): text` in the prompt.
     // The marker set `[1]..[N]` is the valid citation range for the LLM.
-    let valid_markers: Vec<String> = hits.iter().enumerate().map(|(i, _)| format!("[{}]", i + 1)).collect();
-    let prompt = build_ask_prompt(query, &hits);
+    let (valid_markers, prompt) = {
+      let _step = self.config.verbose.start("build prompt");
+      let valid_markers: Vec<String> = hits.iter().enumerate().map(|(i, _)| format!("[{}]", i + 1)).collect();
+      let prompt = build_ask_prompt(query, &hits);
+      (valid_markers, prompt)
+    };
 
     // ---- Generate the answer via the LLM ----
-    let raw = self.config.llm.complete(&prompt).await?;
+    let raw = {
+      let _step = self.config.verbose.start("LLM complete");
+      self.config.llm.complete(&prompt).await?
+    };
 
     // ---- Parse and validate citation markers from the answer ----
-    let valid = parse_citations(&raw, &valid_markers);
+    let valid = {
+      let _step = self.config.verbose.start("parse citations");
+      parse_citations(&raw, &valid_markers)
+    };
 
     // ---- Back-fill citation sources from the retrieved chunks ----
     // Each valid marker `[N]` maps to hits[N-1].chunk — we extract
@@ -154,6 +170,7 @@ mod tests {
         segmenter: Arc::new(JiebaSegmenter),
         storage: storage.clone(),
         reader: TextReader::new(),
+        verbose: Verbose(false),
       });
       indexer.index_file(&path).await.unwrap();
     }
@@ -169,6 +186,7 @@ mod tests {
       vector_top_k: 100,
       rrf_k: 60,
       rerank_top_n: 20,
+      verbose: Verbose(false),
     })
   }
 
@@ -189,6 +207,7 @@ mod tests {
     let synth = Synthesizer::new(SynthesizerConfig {
       retriever: Arc::new(retriever),
       llm: Arc::new(llm),
+      verbose: Verbose(false),
     });
 
     let answer = synth.ask("定价方案").await.unwrap();
@@ -211,6 +230,7 @@ mod tests {
     let synth = Synthesizer::new(SynthesizerConfig {
       retriever: Arc::new(retriever),
       llm: Arc::new(llm),
+      verbose: Verbose(false),
     });
 
     let answer = synth.ask("pricing").await.unwrap();
@@ -229,6 +249,7 @@ mod tests {
     let synth = Synthesizer::new(SynthesizerConfig {
       retriever: Arc::new(retriever),
       llm: Arc::new(llm),
+      verbose: Verbose(false),
     });
 
     let answer = synth.ask("nothing matches here").await.unwrap();

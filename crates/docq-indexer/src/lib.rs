@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use docq_core::{Chunk, Chunker, Document, Embedder, ParseError, Result, Storage, WordSegmenter};
+use docq_core::{Chunk, Chunker, Document, Embedder, ParseError, Result, Storage, Verbose, WordSegmenter};
 use sha2::{Digest, Sha256};
 
 pub struct IndexerConfig {
@@ -21,6 +21,7 @@ pub struct IndexerConfig {
   pub segmenter: Arc<dyn WordSegmenter>,
   pub storage: Arc<dyn Storage>,
   pub reader: TextReader,
+  pub verbose: Verbose,
 }
 
 pub struct Indexer {
@@ -114,8 +115,16 @@ impl Indexer {
 
   pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
     let docs = self.config.reader.read_dir(path, true)?;
+    let total = docs.len();
     let mut stats = IndexStats::default();
-    for doc_src in &docs {
+    for (i, doc_src) in docs.iter().enumerate() {
+      self.config.verbose.log(&format!(
+        "indexing file {}/{} ({:.0}%): {}",
+        i + 1,
+        total,
+        (i + 1) as f32 / total.max(1) as f32 * 100.0,
+        doc_src.path.display()
+      ));
       let s = self.index_file(&doc_src.path).await?;
       stats.merge(&s);
     }
@@ -183,6 +192,7 @@ mod tests {
       segmenter: Arc::new(JiebaSegmenter),
       storage: Arc::new(storage),
       reader: TextReader::new(),
+      verbose: Verbose(false),
     })
   }
 
@@ -265,6 +275,7 @@ mod tests {
       segmenter: Arc::new(JiebaSegmenter),
       storage: storage.clone(),
       reader: TextReader::new(),
+      verbose: Verbose(false),
     });
 
     indexer.index_file(&path).await.unwrap();

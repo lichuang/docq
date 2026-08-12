@@ -8,7 +8,7 @@ use std::process;
 use config::DocqConfig;
 
 use clap::{Parser, Subcommand};
-use docq_core::{EngineStatus, Storage};
+use docq_core::{EngineStatus, Storage, Verbose};
 use docq_storage::SqliteStorage;
 use serde::Serialize;
 
@@ -32,6 +32,10 @@ struct Cli {
   /// Path to a custom configuration file (default: ~/.config/docq/config.toml).
   #[arg(short = 'c', long, global = true)]
   config: Option<PathBuf>,
+
+  /// Enable verbose progress output (use -vv for even more detail).
+  #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count)]
+  verbose: u8,
 
   #[command(subcommand)]
   command: Commands,
@@ -170,8 +174,9 @@ async fn main() {
       process::exit(1);
     }
   };
+  let verbose = Verbose(cli.verbose > 0);
 
-  if let Err(e) = run_command(&cli.command, &workspace, &model_cache, config).await {
+  if let Err(e) = run_command(&cli.command, &workspace, &model_cache, config, verbose).await {
     print_error_json(&e.to_string());
     process::exit(1);
   }
@@ -193,7 +198,13 @@ fn ensure_config() -> anyhow::Result<DocqConfig> {
   }
 }
 
-async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path, config: DocqConfig) -> anyhow::Result<()> {
+async fn run_command(
+  cmd: &Commands,
+  workspace: &Path,
+  model_cache: &Path,
+  config: DocqConfig,
+  verbose: Verbose,
+) -> anyhow::Result<()> {
   // Make sure the workspace (data) directory exists for commands that need storage.
   fs::create_dir_all(workspace)?;
 
@@ -242,7 +253,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path, confi
     }
 
     Commands::Index { collection } => {
-      let engine = Engine::open_for_index(engine_config(workspace, model_cache, config.clone())).await?;
+      let engine = Engine::open_for_index(engine_config(workspace, model_cache, config.clone(), verbose)).await?;
       let stats = if let Some(name) = collection {
         engine.index_one(name).await?
       } else {
@@ -260,7 +271,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path, confi
       explain,
       json,
     } => {
-      let engine = Engine::open_for_search(engine_config(workspace, model_cache, config.clone())).await?;
+      let engine = Engine::open_for_search(engine_config(workspace, model_cache, config.clone(), verbose)).await?;
       let hits = engine.search(query, *top_k).await?;
 
       if *json {
@@ -296,7 +307,7 @@ async fn run_command(cmd: &Commands, workspace: &Path, model_cache: &Path, confi
     }
 
     Commands::Ask { query, json } => {
-      let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config.clone())).await?;
+      let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config.clone(), verbose)).await?;
       let answer = engine.ask(query).await?;
 
       if *json {
@@ -321,10 +332,11 @@ fn open_storage(workspace: &Path) -> anyhow::Result<SqliteStorage> {
   Ok(storage)
 }
 
-fn engine_config(workspace: &Path, model_cache: &Path, config: DocqConfig) -> EngineConfig {
+fn engine_config(workspace: &Path, model_cache: &Path, config: DocqConfig, verbose: Verbose) -> EngineConfig {
   EngineConfig {
     workspace_path: workspace.to_path_buf(),
     model_cache_dir: model_cache.to_path_buf(),
     config,
+    verbose,
   }
 }
