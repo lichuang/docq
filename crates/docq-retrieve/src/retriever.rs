@@ -59,9 +59,10 @@ impl Retriever {
       let _step = self.config.verbose.start("segment query");
       self.config.segmenter.segment(query)
     };
+    let safe_query = sanitize_fts5_query(&segmented_query);
     let bm25_results = {
       let _step = self.config.verbose.start("BM25 recall");
-      self.config.storage.search_text(&segmented_query, self.config.bm25_top_k)?
+      self.config.storage.search_text(&safe_query, self.config.bm25_top_k)?
     };
 
     // ---- Channel 2: vector semantic recall ----
@@ -166,6 +167,25 @@ impl Retriever {
 
     Ok(hits)
   }
+}
+
+/// Escape each token in an FTS5 query so that special characters like `-`,
+/// `:`, `(`, `)`, `"` etc. are treated as literals rather than query syntax.
+/// Tokens are split on whitespace and each is wrapped in double quotes.
+fn sanitize_fts5_query(query: &str) -> String {
+  query
+    .split_whitespace()
+    .map(|token| {
+      if token.is_empty() {
+        String::new()
+      } else {
+        // Escape embedded double quotes by doubling them.
+        let escaped = token.replace('"', "\"\"");
+        format!("\"{escaped}\"")
+      }
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 #[cfg(test)]
@@ -348,6 +368,16 @@ mod tests {
     let retriever = test_retriever(&storage);
     let hits = retriever.search("不存在的内容", 5).await.unwrap();
     assert!(hits.is_empty());
+  }
+
+  #[test]
+  fn test_sanitize_fts5_query_quotes_each_token() {
+    assert_eq!(sanitize_fts5_query("Multi-Paxos"), "\"Multi-Paxos\"");
+    assert_eq!(sanitize_fts5_query("hello world"), "\"hello\" \"world\"");
+    assert_eq!(
+      sanitize_fts5_query("a \"quoted\" term"),
+      "\"a\" \"\"\"quoted\"\"\" \"term\""
+    );
   }
 
   #[tokio::test]
