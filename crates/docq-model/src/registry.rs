@@ -9,7 +9,7 @@ pub const BGE_SMALL_ZH_V1_5_TOKENIZER_FILE: &str = "tokenizer.json";
 /// Maximum input length the embedding model accepts. Chunks exceeding this
 /// are silently truncated by the ONNX runtime, so `SentenceSplitter` must
 /// use this as `chunk_size` to avoid losing tail content.
-pub const BGE_SMALL_ZH_V1_5_MAX_TOKENS: usize = 512;
+pub const BGE_SMALL_ZH_V1_5_MAX_TOKENS: usize = 1024;
 
 // ---- Default reranker model: BAAI/bge-reranker-base ----
 
