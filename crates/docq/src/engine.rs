@@ -7,7 +7,9 @@ use docq_core::{
   Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelSpec, Reranker, Result, SearchHit, Storage,
   Verbose, WordSegmenter,
 };
-use docq_indexer::{IndexStats, Indexer, IndexerConfig, JiebaSegmenter, SentenceSplitter, TextReader};
+use docq_indexer::{
+  IndexStats, Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, SentenceSplitter, TextFileReader,
+};
 use docq_model::{BGE_SMALL_ZH_V1_5_TOKENIZER_FILE, FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
 use docq_retrieve::{Retriever, RetrieverConfig};
 
@@ -32,7 +34,7 @@ pub struct EngineComponents {
   pub segmenter: Arc<dyn WordSegmenter>,
   pub reranker: Option<Arc<dyn Reranker>>,
   pub llm: Option<Arc<dyn Llm>>,
-  pub reader: TextReader,
+  pub readers: ReaderRegistry,
   pub retrieval: RetrievalConfig,
   pub verbose: Verbose,
 }
@@ -54,7 +56,7 @@ impl Engine {
       segmenter,
       reranker,
       llm,
-      reader,
+      readers,
       retrieval,
       verbose,
     } = components;
@@ -64,7 +66,7 @@ impl Engine {
       embedder: embedder.clone(),
       segmenter: segmenter.clone(),
       storage: storage.clone(),
-      reader,
+      readers,
       verbose,
     });
 
@@ -95,6 +97,12 @@ impl Engine {
       synthesizer,
       verbose,
     }
+  }
+
+  fn default_readers() -> ReaderRegistry {
+    let mut reg = ReaderRegistry::new();
+    reg.register(Arc::new(TextFileReader::new()));
+    reg
   }
 
   // ---- Shared helpers for model loading ----
@@ -176,7 +184,7 @@ impl Engine {
       segmenter: Arc::new(JiebaSegmenter),
       reranker: None,
       llm: None,
-      reader: TextReader::new(),
+      readers: Self::default_readers(),
       retrieval: config.retrieval.clone(),
       verbose,
     }))
@@ -210,7 +218,7 @@ impl Engine {
       segmenter: Arc::new(JiebaSegmenter),
       reranker: Some(reranker),
       llm: None,
-      reader: TextReader::new(),
+      readers: Self::default_readers(),
       retrieval: config.retrieval.clone(),
       verbose,
     }))
@@ -250,7 +258,7 @@ impl Engine {
       segmenter: Arc::new(JiebaSegmenter),
       reranker: Some(reranker),
       llm: Some(llm),
-      reader: TextReader::new(),
+      readers: Self::default_readers(),
       retrieval: config.retrieval.clone(),
       verbose,
     }))
@@ -317,6 +325,12 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+  fn test_readers() -> ReaderRegistry {
+    let mut reg = ReaderRegistry::new();
+    reg.register(Arc::new(TextFileReader::new()));
+    reg
+  }
+
   use super::*;
   use docq_core::{ChunkCandidate, Chunker, Embedder, Llm, Storage};
   use tempfile::TempDir;
@@ -385,7 +399,7 @@ mod tests {
       segmenter: Arc::new(JiebaSegmenter),
       reranker: None,
       llm: Some(Arc::new(StubLlm)),
-      reader: TextReader::new(),
+      readers: test_readers(),
       retrieval: crate::config::RetrievalConfig {
         bm25_top_k: 100,
         vector_top_k: 100,
@@ -458,7 +472,7 @@ mod tests {
       segmenter: Arc::new(JiebaSegmenter),
       reranker: None,
       llm: None,
-      reader: TextReader::new(),
+      readers: test_readers(),
       retrieval: crate::config::RetrievalConfig {
         bm25_top_k: 100,
         vector_top_k: 100,

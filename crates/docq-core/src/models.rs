@@ -107,6 +107,12 @@ pub struct Collection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSource {
+  pub path: std::path::PathBuf,
+  pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineStatus {
   pub documents: usize,
   pub chunks: usize,

@@ -96,7 +96,7 @@ impl Synthesizer {
 mod tests {
   use super::*;
   use docq_core::{Chunker, Embedder, Storage};
-  use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, TextReader};
+  use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, TextFileReader};
   use docq_retrieve::{Retriever, RetrieverConfig};
   use docq_storage::SqliteStorage;
   use tempfile::TempDir;
@@ -153,6 +153,12 @@ mod tests {
     }
   }
 
+  fn test_readers() -> ReaderRegistry {
+    let mut reg = ReaderRegistry::new();
+    reg.register(Arc::new(TextFileReader::new()));
+    reg
+  }
+
   fn test_storage() -> SqliteStorage {
     let s = SqliteStorage::open_in_memory().unwrap();
     s.init().unwrap();
@@ -169,7 +175,7 @@ mod tests {
         embedder: Arc::new(StubEmbedder { dim: 512 }),
         segmenter: Arc::new(JiebaSegmenter),
         storage: storage.clone(),
-        reader: TextReader::new(),
+        readers: test_readers(),
         verbose: Verbose(false),
       });
       indexer.index_file(&path).await.unwrap();

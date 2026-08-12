@@ -5,7 +5,7 @@ pub mod reader;
 pub mod tokenizer;
 
 pub use chunker::SentenceSplitter;
-pub use reader::{DocumentSource, TextReader};
+pub use reader::{ReaderRegistry, TextFileReader};
 pub use tokenizer::{JiebaSegmenter, jieba_tokenize};
 
 use std::path::Path;
@@ -26,7 +26,7 @@ pub struct IndexerConfig {
   pub embedder: Arc<dyn Embedder>,
   pub segmenter: Arc<dyn WordSegmenter>,
   pub storage: Arc<dyn Storage>,
-  pub reader: TextReader,
+  pub readers: ReaderRegistry,
   pub verbose: Verbose,
 }
 
@@ -76,7 +76,7 @@ impl Indexer {
   }
 
   pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
-    let docs = self.config.reader.read_dir(path, true)?;
+    let docs = self.config.readers.read_dir(path, true)?;
     let total = docs.len();
     let mut stats = IndexStats::default();
     let mut pending: Vec<PendingFile> = Vec::new();
@@ -242,6 +242,12 @@ mod tests {
     }
   }
 
+  fn test_readers() -> ReaderRegistry {
+    let mut reg = ReaderRegistry::new();
+    reg.register(Arc::new(TextFileReader::new()));
+    reg
+  }
+
   fn test_storage() -> SqliteStorage {
     let s = SqliteStorage::open_in_memory().unwrap();
     s.init().unwrap();
@@ -254,7 +260,7 @@ mod tests {
       embedder: Arc::new(StubEmbedder { dim: 512 }),
       segmenter: Arc::new(JiebaSegmenter),
       storage: Arc::new(storage),
-      reader: TextReader::new(),
+      readers: test_readers(),
       verbose: Verbose(false),
     })
   }
@@ -337,7 +343,7 @@ mod tests {
       embedder: Arc::new(StubEmbedder { dim: 512 }),
       segmenter: Arc::new(JiebaSegmenter),
       storage: storage.clone(),
-      reader: TextReader::new(),
+      readers: test_readers(),
       verbose: Verbose(false),
     });
 

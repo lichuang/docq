@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 
 use crate::error::Result;
-use crate::models::{Chunk, ChunkCandidate, Collection, Document, ModelSpec};
+use crate::models::{Chunk, ChunkCandidate, Collection, Document, DocumentSource, ModelSpec};
 
 #[async_trait]
 pub trait Embedder: Send + Sync {
@@ -31,6 +31,17 @@ pub trait Llm: Send + Sync {
 
 pub trait Chunker: Send + Sync {
   fn chunk(&self, text: &str) -> Vec<ChunkCandidate>;
+}
+
+pub trait FileReader: Send + Sync {
+  /// File extensions this reader handles, without the leading dot
+  /// (e.g. `["txt", "md"]` or `["pdf"]`).
+  fn extensions(&self) -> &[&str];
+
+  /// Read a single file and return its content as a `DocumentSource`.
+  /// Return `Ok(None)` to silently skip the file (e.g. empty or
+  /// non-UTF-8).
+  fn read(&self, path: &std::path::Path) -> Result<Option<DocumentSource>>;
 }
 
 pub trait WordSegmenter: Send + Sync {

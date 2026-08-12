@@ -192,7 +192,7 @@ fn sanitize_fts5_query(query: &str) -> String {
 mod tests {
   use super::*;
   use docq_core::{ChunkCandidate, Chunker, Embedder, Reranker, Result, ScoredChunk, Storage};
-  use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, TextReader};
+  use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, TextFileReader};
   use docq_storage::SqliteStorage;
   use tempfile::TempDir;
 
@@ -247,11 +247,17 @@ mod tests {
         embedder: Arc::new(StubEmbedder { dim: 512 }),
         segmenter: Arc::new(JiebaSegmenter),
         storage: storage.clone(),
-        reader: TextReader::new(),
+        readers: test_readers(),
         verbose: Verbose(false),
       });
       indexer.index_file(&path).await.unwrap();
     }
+  }
+
+  fn test_readers() -> ReaderRegistry {
+    let mut reg = ReaderRegistry::new();
+    reg.register(Arc::new(TextFileReader::new()));
+    reg
   }
 
   fn test_storage() -> SqliteStorage {
