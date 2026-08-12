@@ -2,54 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use docq_core::{FileReader, ParseError, Result};
+use docq_core::{FileReader, Result};
 use glob::Pattern;
 use walkdir::WalkDir;
-
-pub struct TextFileReader {
-  extensions: Vec<&'static str>,
-}
-
-impl Default for TextFileReader {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl TextFileReader {
-  pub fn new() -> Self {
-    Self::with_extensions(&["txt", "md"])
-  }
-
-  pub fn with_extensions(extensions: &[&'static str]) -> Self {
-    Self {
-      extensions: extensions.to_vec(),
-    }
-  }
-}
-
-impl FileReader for TextFileReader {
-  fn extensions(&self) -> &[&str] {
-    &self.extensions
-  }
-
-  fn read(&self, path: &Path) -> Result<Option<docq_core::DocumentSource>> {
-    match std::fs::read_to_string(path) {
-      Ok(content) => {
-        if content.is_empty() {
-          Ok(None)
-        } else {
-          Ok(Some(docq_core::DocumentSource {
-            path: path.to_path_buf(),
-            content,
-          }))
-        }
-      }
-      Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Ok(None),
-      Err(e) => Err(ParseError::Other(format!("read {}: {e}", path.display())).into()),
-    }
-  }
-}
 
 /// Registry of file readers, keyed by file extension.
 /// Holds one `Arc<dyn FileReader>` per registered reader, and dispatches
@@ -129,6 +84,7 @@ impl ReaderRegistry {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::reader::TextFileReader;
   use std::fs;
   use tempfile::TempDir;
 
