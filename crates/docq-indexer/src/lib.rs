@@ -15,6 +15,12 @@ use chrono::Utc;
 use docq_core::{Chunk, Chunker, Document, Embedder, ParseError, Result, Storage, Verbose, WordSegmenter};
 use sha2::{Digest, Sha256};
 
+/// Maximum chunks buffered before flushing to embedding + storage.
+/// Controls peak memory: 500 chunks × 512-dim f32 ≈ 1 MB embeddings +
+/// chunk text. Large enough to amortize ONNX call overhead, small enough
+/// to stay within ~2 MB per batch.
+const EMBED_BATCH_SIZE: usize = 500;
+
 pub struct IndexerConfig {
   pub chunker: Arc<dyn Chunker>,
   pub embedder: Arc<dyn Embedder>,
@@ -43,6 +49,13 @@ impl IndexStats {
   }
 }
 
+struct PendingFile {
+  doc: Document,
+  chunks: Vec<Chunk>,
+  chunk_texts: Vec<String>,
+  tokenized_texts: Vec<String>,
+}
+
 impl Indexer {
   pub fn new(config: IndexerConfig) -> Self {
     Self { config }
@@ -50,29 +63,79 @@ impl Indexer {
 
   pub async fn index_file(&self, path: &Path) -> Result<IndexStats> {
     let content = std::fs::read_to_string(path).map_err(|e| ParseError::Other(format!("{}: {e}", path.display())))?;
-    let content_hash = sha256_hex(&content);
+    match self.prepare_file(path, &content)? {
+      Some(pending) => {
+        let mut batch = vec![pending];
+        self.flush_batch(&mut batch).await
+      }
+      None => Ok(IndexStats {
+        files_skipped: 1,
+        ..Default::default()
+      }),
+    }
+  }
+
+  pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
+    let docs = self.config.reader.read_dir(path, true)?;
+    let total = docs.len();
+    let mut stats = IndexStats::default();
+    let mut pending: Vec<PendingFile> = Vec::new();
+    let mut pending_chunk_count = 0usize;
+
+    for (i, doc_src) in docs.iter().enumerate() {
+      self.config.verbose.log(&format!(
+        "chunking file {}/{} ({:.0}%): {}",
+        i + 1,
+        total,
+        (i + 1) as f32 / total.max(1) as f32 * 100.0,
+        doc_src.path.display()
+      ));
+
+      match self.prepare_file(&doc_src.path, &doc_src.content)? {
+        Some(pf) => {
+          pending_chunk_count += pf.chunks.len();
+          pending.push(pf);
+          if pending_chunk_count >= EMBED_BATCH_SIZE {
+            let s = self.flush_batch(&mut pending).await?;
+            stats.files_indexed += s.files_indexed;
+            stats.chunks_indexed += s.chunks_indexed;
+            pending_chunk_count = 0;
+          }
+        }
+        None => {
+          stats.files_skipped += 1;
+        }
+      }
+    }
+
+    if !pending.is_empty() {
+      let s = self.flush_batch(&mut pending).await?;
+      stats.files_indexed += s.files_indexed;
+      stats.chunks_indexed += s.chunks_indexed;
+    }
+
+    Ok(stats)
+  }
+
+  /// Read a single file's content, skip unchanged/empty files, and build a
+  /// `PendingFile` ready for batched embedding and storage.
+  fn prepare_file(&self, path: &Path, content: &str) -> Result<Option<PendingFile>> {
+    let content_hash = sha256_hex(content);
     let doc_id = path.to_string_lossy().to_string();
 
     if let Some(existing) = self.config.storage.get_document(&doc_id)?
       && existing.content_hash == content_hash
     {
-      return Ok(IndexStats {
-        files_skipped: 1,
-        ..Default::default()
-      });
+      return Ok(None);
     }
 
-    let candidates = self.config.chunker.chunk(&content);
+    let candidates = self.config.chunker.chunk(content);
     if candidates.is_empty() {
-      return Ok(IndexStats {
-        files_skipped: 1,
-        ..Default::default()
-      });
+      return Ok(None);
     }
 
     let chunk_texts: Vec<String> = candidates.iter().map(|c| c.text.clone()).collect();
-    let embeddings = self.config.embedder.embed(&chunk_texts).await?;
-
+    let tokenized_texts: Vec<String> = chunk_texts.iter().map(|t| self.config.segmenter.segment(t)).collect();
     let chunks: Vec<Chunk> = candidates
       .iter()
       .map(|c| Chunk {
@@ -83,51 +146,51 @@ impl Indexer {
       })
       .collect();
 
-    let chunk_ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
-    let tokenized_texts: Vec<String> = chunk_texts.iter().map(|t| self.config.segmenter.segment(t)).collect();
-
     let doc = Document {
-      id: doc_id.clone(),
+      id: doc_id,
       file_path: path.to_path_buf(),
-      content_hash: content_hash.clone(),
+      content_hash,
       content_size: content.len(),
       indexed_at: Utc::now(),
     };
 
-    {
-      let mut tx = self.config.storage.begin_tx()?;
-      if self.config.storage.get_document(&doc_id)?.is_some() {
-        tx.delete_chunks_by_doc(&doc_id)?;
-      }
-      tx.add_document(&doc)?;
-      tx.add_chunks(&chunks)?;
-      tx.add_vectors(&chunk_ids, &embeddings)?;
-      tx.add_fts_chunks(&chunk_ids, &tokenized_texts)?;
-      tx.commit()?;
-    }
-
-    Ok(IndexStats {
-      files_indexed: 1,
-      chunks_indexed: chunks.len(),
-      ..Default::default()
-    })
+    Ok(Some(PendingFile {
+      doc,
+      chunks,
+      chunk_texts,
+      tokenized_texts,
+    }))
   }
 
-  pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
-    let docs = self.config.reader.read_dir(path, true)?;
-    let total = docs.len();
+  /// Embed all chunks in `pending` in one batch, then write each file
+  /// to storage in its own transaction.
+  async fn flush_batch(&self, pending: &mut Vec<PendingFile>) -> Result<IndexStats> {
+    let all_texts: Vec<String> = pending.iter().flat_map(|f| f.chunk_texts.iter().cloned()).collect();
+    let all_embeddings = self.config.embedder.embed(&all_texts).await?;
+
     let mut stats = IndexStats::default();
-    for (i, doc_src) in docs.iter().enumerate() {
-      self.config.verbose.log(&format!(
-        "indexing file {}/{} ({:.0}%): {}",
-        i + 1,
-        total,
-        (i + 1) as f32 / total.max(1) as f32 * 100.0,
-        doc_src.path.display()
-      ));
-      let s = self.index_file(&doc_src.path).await?;
-      stats.merge(&s);
+    let mut offset = 0usize;
+
+    for pf in pending.drain(..) {
+      let n = pf.chunks.len();
+      let embeddings: Vec<Vec<f32>> = all_embeddings[offset..offset + n].to_vec();
+      let chunk_ids: Vec<String> = pf.chunks.iter().map(|c| c.id.clone()).collect();
+
+      let mut tx = self.config.storage.begin_tx()?;
+      if self.config.storage.get_document(&pf.doc.id)?.is_some() {
+        tx.delete_chunks_by_doc(&pf.doc.id)?;
+      }
+      tx.add_document(&pf.doc)?;
+      tx.add_chunks(&pf.chunks)?;
+      tx.add_vectors(&chunk_ids, &embeddings)?;
+      tx.add_fts_chunks(&chunk_ids, &pf.tokenized_texts)?;
+      tx.commit()?;
+
+      stats.files_indexed += 1;
+      stats.chunks_indexed += n;
+      offset += n;
     }
+
     Ok(stats)
   }
 }

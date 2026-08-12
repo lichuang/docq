@@ -46,7 +46,7 @@ Run `docq --help` and `docq <command> --help` to discover all options.
 
 ## Example with the bundled test data
 
-The repository includes sample documents under `testdata`. These excerpts are from the public tutorial **Distributed System Illustrated** by [codedump.info](https://www.codedump.info/dist-system-en/). You can try the CLI without preparing your own files:
+The repository includes sample documents under `testdata`. These excerpts are from the public tutorial **Distributed System Illustrated** by [codedump.info](https://www.codedump.info/dist-system-en/?ref=docq). You can try the CLI without preparing your own files:
 
 ```bash
 docq init
@@ -63,7 +63,7 @@ docq ask "What are the improvements of Multi-Paxos over the Paxos algorithm?"
 docq ask "What are the improvements of Multi-Paxos over the Paxos algorithm?" -v
 ```
 
-also, you can ask the same question in Chinese because docq also support Chinese:
+you can ask the same question in Chinese because docq also support Chinese:
 
 ```shell
 docq  ask "multi paxos 相比 paxos 算法的改进点？"
