@@ -2,7 +2,7 @@
 
 **Local-first search and answers for your documents.**
 
-`docq` is a local, offline-ready tool that helps you find information in your personal document collections and get cited answers. Everything stays on your machine: indexes, models, and queries.
+`docq` (short for **document query**) is a local, offline-ready tool that helps you find information in your personal document collections and get cited answers. Everything stays on your machine: indexes, models, and queries.
 
 ## What it does
 
