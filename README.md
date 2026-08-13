@@ -11,6 +11,16 @@
 
 Use it for notes, documentation, research papers, or any text-heavy directory.
 
+## Supported document formats
+
+`docq` can index plain text and common document formats:
+
+- **Markdown** (`.md`) and plain text (`.txt`)
+- **PDF** (`.pdf`) — enabled by default via the `pdf` feature
+- **Microsoft Word** (`.docx`) — enabled by default via the `docx` feature
+
+You can disable optional format support at build time with `--no-default-features`.
+
 ## Install
 
 ```bash
@@ -46,7 +56,7 @@ Run `docq --help` and `docq <command> --help` to discover all options.
 
 ## Example with the bundled test data
 
-The repository includes sample documents under `testdata`. These excerpts are from the public tutorial **Distributed System Illustrated** by [codedump.info](https://www.codedump.info/dist-system-en/?ref=docq). You can try the CLI without preparing your own files:
+The repository includes sample documents under `testdata/`. These excerpts are from the public tutorial **Distributed System Illustrated** by [codedump.info](https://www.codedump.info/dist-system-en/?ref=docq). You can try the CLI without preparing your own files:
 
 ```bash
 docq init
