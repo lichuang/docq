@@ -7,6 +7,8 @@ use docq_core::{
   Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelSpec, Reranker, Result, SearchHit, Storage,
   Verbose, WordSegmenter,
 };
+#[cfg(feature = "docx")]
+use docq_indexer::DocxReader;
 #[cfg(feature = "pdf")]
 use docq_indexer::PdfReader;
 use docq_indexer::{
@@ -106,6 +108,8 @@ impl Engine {
     reg.register(Arc::new(TextFileReader::new()));
     #[cfg(feature = "pdf")]
     reg.register(Arc::new(PdfReader::new()));
+    #[cfg(feature = "docx")]
+    reg.register(Arc::new(DocxReader::new()));
     reg
   }
 
@@ -334,6 +338,8 @@ mod tests {
     reg.register(Arc::new(TextFileReader::new()));
     #[cfg(feature = "pdf")]
     reg.register(Arc::new(PdfReader::new()));
+    #[cfg(feature = "docx")]
+    reg.register(Arc::new(DocxReader::new()));
     reg
   }
 

@@ -28,8 +28,9 @@ tokenizers = { workspace = true }
 async-trait = { workspace = true }
 
 [features]
-default = ["pdf"]
+default = ["pdf", "docx"]
 pdf = ["docq-indexer/pdf"]
+docx = ["docq-indexer/docx"]
 
 [dev-dependencies]
 tempfile = "3"

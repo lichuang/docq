@@ -6,6 +6,8 @@ pub mod reader_registry;
 pub mod tokenizer;
 
 pub use chunker::SentenceSplitter;
+#[cfg(feature = "docx")]
+pub use reader::DocxReader;
 #[cfg(feature = "pdf")]
 pub use reader::PdfReader;
 pub use reader::TextFileReader;

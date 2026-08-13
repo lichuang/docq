@@ -24,11 +24,15 @@ walkdir = { workspace = true }
 sha2 = { workspace = true }
 chrono = { workspace = true }
 pdf-extract = { version = "0.12", optional = true }
+zip = { version = "2", optional = true }
+quick-xml = { version = "0.37", optional = true }
 
 [features]
-default = ["pdf"]
+default = ["pdf", "docx"]
 pdf = ["dep:pdf-extract"]
+docx = ["dep:zip", "dep:quick-xml"]
 
 [dev-dependencies]
 tempfile = "3"
 lopdf = "0.42"
+zip = "2"
