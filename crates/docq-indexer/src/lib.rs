@@ -6,6 +6,8 @@ pub mod reader_registry;
 pub mod tokenizer;
 
 pub use chunker::SentenceSplitter;
+#[cfg(feature = "pdf")]
+pub use reader::PdfReader;
 pub use reader::TextFileReader;
 pub use reader_registry::ReaderRegistry;
 pub use tokenizer::{JiebaSegmenter, jieba_tokenize};

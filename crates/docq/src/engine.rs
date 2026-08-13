@@ -7,6 +7,8 @@ use docq_core::{
   Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelSpec, Reranker, Result, SearchHit, Storage,
   Verbose, WordSegmenter,
 };
+#[cfg(feature = "pdf")]
+use docq_indexer::PdfReader;
 use docq_indexer::{
   IndexStats, Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, SentenceSplitter, TextFileReader,
 };
@@ -102,6 +104,8 @@ impl Engine {
   fn default_readers() -> ReaderRegistry {
     let mut reg = ReaderRegistry::new();
     reg.register(Arc::new(TextFileReader::new()));
+    #[cfg(feature = "pdf")]
+    reg.register(Arc::new(PdfReader::new()));
     reg
   }
 
@@ -328,6 +332,8 @@ mod tests {
   fn test_readers() -> ReaderRegistry {
     let mut reg = ReaderRegistry::new();
     reg.register(Arc::new(TextFileReader::new()));
+    #[cfg(feature = "pdf")]
+    reg.register(Arc::new(PdfReader::new()));
     reg
   }
 
