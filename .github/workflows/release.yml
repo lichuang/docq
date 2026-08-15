@@ -24,10 +24,6 @@ jobs:
             target: aarch64-apple-darwin
             target_dir: target/aarch64-apple-darwin/release
             binary_name: docq
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            target_dir: target/x86_64-apple-darwin/release
-            binary_name: docq
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             target_dir: target/x86_64-pc-windows-msvc/release
