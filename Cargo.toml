@@ -42,3 +42,9 @@ docq-indexer = { path = "crates/docq-indexer", version = "0.1.0" }
 docq-storage = { path = "crates/docq-storage", version = "0.1.0" }
 docq-retrieve = { path = "crates/docq-retrieve", version = "0.1.0" }
 docq-synth = { path = "crates/docq-synth", version = "0.1.0" }
+
+# esaxx-rs 0.1.10 unconditionally forces /MT on Windows, which conflicts with
+# other C/C++ dependencies (e.g. llama.cpp) that use /MD. Vendor a patched copy
+# that uses the dynamic runtime on Windows so the linker can produce a binary.
+[patch.crates-io]
+esaxx-rs = { path = "vendor/esaxx-rs" }
