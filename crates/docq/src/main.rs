@@ -212,7 +212,6 @@ async fn run_command(
     Commands::Init => {
       fs::create_dir_all(workspace)?;
       let storage = SqliteStorage::open_workspace(workspace)?;
-      use docq_core::Storage;
       storage.init()?;
       println!("Initialized workspace at {}", workspace.display());
     }

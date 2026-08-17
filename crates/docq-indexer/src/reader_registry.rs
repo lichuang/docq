@@ -50,6 +50,20 @@ impl ReaderRegistry {
     name.starts_with('.') || self.ignore_patterns.iter().any(|pat| pat.matches(name))
   }
 
+  /// Read a single file using the registered reader for its extension.
+  /// Returns `None` if the path is ignored, has no registered reader, or the
+  /// reader decides to skip the file (e.g. empty content).
+  pub fn read_file(&self, path: &Path) -> Result<Option<docq_core::DocumentSource>> {
+    if self.is_ignored(path) {
+      return Ok(None);
+    }
+    let reader = match self.find_reader(path) {
+      Some(r) => r,
+      None => return Ok(None),
+    };
+    reader.read(path)
+  }
+
   /// Walk a directory, dispatch each file to the registered reader that
   /// handles its extension, and collect all `DocumentSource`s.
   pub fn read_dir(&self, path: &Path, recursive: bool) -> Result<Vec<docq_core::DocumentSource>> {

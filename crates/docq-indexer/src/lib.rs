@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::Utc;
-use docq_core::{Chunk, Chunker, Document, Embedder, ParseError, Result, Storage, Verbose, WordSegmenter};
+use docq_core::{Chunk, Chunker, Document, Embedder, Result, Storage, Verbose, WordSegmenter};
 use sha2::{Digest, Sha256};
 
 /// Maximum chunks buffered before flushing to embedding + storage.
@@ -68,8 +68,16 @@ impl Indexer {
   }
 
   pub async fn index_file(&self, path: &Path) -> Result<IndexStats> {
-    let content = std::fs::read_to_string(path).map_err(|e| ParseError::Other(format!("{}: {e}", path.display())))?;
-    match self.prepare_file(path, &content)? {
+    let doc_src = match self.config.readers.read_file(path)? {
+      Some(doc) => doc,
+      None => {
+        return Ok(IndexStats {
+          files_skipped: 1,
+          ..Default::default()
+        });
+      }
+    };
+    match self.prepare_file(&doc_src.path, &doc_src.content)? {
       Some(pending) => {
         let mut batch = vec![pending];
         self.flush_batch(&mut batch).await
