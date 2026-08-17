@@ -37,7 +37,12 @@ pub struct IndexerConfig {
 }
 
 pub struct Indexer {
-  config: IndexerConfig,
+  chunker: Arc<dyn Chunker>,
+  embedder: Arc<dyn Embedder>,
+  segmenter: Arc<dyn WordSegmenter>,
+  storage: Arc<dyn Storage>,
+  readers: ReaderRegistry,
+  verbose: Verbose,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -64,11 +69,18 @@ struct PendingFile {
 
 impl Indexer {
   pub fn new(config: IndexerConfig) -> Self {
-    Self { config }
+    Self {
+      chunker: config.chunker,
+      embedder: config.embedder,
+      segmenter: config.segmenter,
+      storage: config.storage,
+      readers: config.readers,
+      verbose: config.verbose,
+    }
   }
 
   pub async fn index_file(&self, path: &Path) -> Result<IndexStats> {
-    let doc_src = match self.config.readers.read_file(path)? {
+    let doc_src = match self.readers.read_file(path)? {
       Some(doc) => doc,
       None => {
         return Ok(IndexStats {
@@ -90,14 +102,14 @@ impl Indexer {
   }
 
   pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
-    let docs = self.config.readers.read_dir(path, true)?;
+    let docs = self.readers.read_dir(path, true)?;
     let total = docs.len();
     let mut stats = IndexStats::default();
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut pending_chunk_count = 0usize;
 
     for (i, doc_src) in docs.iter().enumerate() {
-      self.config.verbose.log(&format!(
+      self.verbose.log(&format!(
         "chunking file {}/{} ({:.0}%): {}",
         i + 1,
         total,
@@ -137,19 +149,19 @@ impl Indexer {
     let content_hash = sha256_hex(content);
     let doc_id = path.to_string_lossy().to_string();
 
-    if let Some(existing) = self.config.storage.get_document(&doc_id)?
+    if let Some(existing) = self.storage.get_document(&doc_id)?
       && existing.content_hash == content_hash
     {
       return Ok(None);
     }
 
-    let candidates = self.config.chunker.chunk(content);
+    let candidates = self.chunker.chunk(content);
     if candidates.is_empty() {
       return Ok(None);
     }
 
     let chunk_texts: Vec<String> = candidates.iter().map(|c| c.text.clone()).collect();
-    let tokenized_texts: Vec<String> = chunk_texts.iter().map(|t| self.config.segmenter.segment(t)).collect();
+    let tokenized_texts: Vec<String> = chunk_texts.iter().map(|t| self.segmenter.segment(t)).collect();
     let chunks: Vec<Chunk> = candidates
       .iter()
       .map(|c| Chunk {
@@ -180,7 +192,7 @@ impl Indexer {
   /// to storage in its own transaction.
   async fn flush_batch(&self, pending: &mut Vec<PendingFile>) -> Result<IndexStats> {
     let all_texts: Vec<String> = pending.iter().flat_map(|f| f.chunk_texts.iter().cloned()).collect();
-    let all_embeddings = self.config.embedder.embed(&all_texts).await?;
+    let all_embeddings = self.embedder.embed(&all_texts).await?;
 
     let mut stats = IndexStats::default();
     let mut offset = 0usize;
@@ -190,8 +202,8 @@ impl Indexer {
       let embeddings: Vec<Vec<f32>> = all_embeddings[offset..offset + n].to_vec();
       let chunk_ids: Vec<String> = pf.chunks.iter().map(|c| c.id.clone()).collect();
 
-      let mut tx = self.config.storage.begin_tx()?;
-      if self.config.storage.get_document(&pf.doc.id)?.is_some() {
+      let mut tx = self.storage.begin_tx()?;
+      if self.storage.get_document(&pf.doc.id)?.is_some() {
         tx.delete_chunks_by_doc(&pf.doc.id)?;
       }
       tx.add_document(&pf.doc)?;
