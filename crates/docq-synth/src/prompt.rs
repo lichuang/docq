@@ -8,7 +8,11 @@ pub fn build_ask_prompt(query: &str, hits: &[SearchHit]) -> String {
     let chunk = &hit.chunk;
     prompt.push_str(&format!(
       "[{}] {} (bytes {}-{}):\n{}\n\n",
-      marker, chunk.doc_id, chunk.byte_range.start, chunk.byte_range.end, chunk.text
+      marker,
+      hit.file_path.display(),
+      chunk.byte_range.start,
+      chunk.byte_range.end,
+      chunk.text
     ));
   }
 
@@ -33,6 +37,7 @@ mod tests {
         text: text.into(),
         byte_range: start..end,
       },
+      file_path: doc_id.into(),
       score: 0.1,
       explain: ScoreExplain::default(),
     }

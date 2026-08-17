@@ -1,13 +1,14 @@
 use std::ops::Range;
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
-  /// File-relative path; the primary identifier.
+  /// Stable document identifier; currently derived from the file path so the
+  /// same path always maps to the same `id` across reindexes.
   pub id: String,
-  pub file_path: std::path::PathBuf,
   /// SHA-256 of file content; drives incremental reindex.
   pub content_hash: String,
   pub content_size: usize,
@@ -34,6 +35,8 @@ pub struct ChunkCandidate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
   pub chunk: Chunk,
+  /// File system path of the source document, resolved from `document_paths`.
+  pub file_path: PathBuf,
   pub score: f32,
   pub explain: ScoreExplain,
 }

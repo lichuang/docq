@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, Once};
 
@@ -71,11 +72,10 @@ fn poisoned() -> StoreError {
 fn insert_document(conn: &Connection, doc: &Document) -> rusqlite::Result<()> {
   conn.execute(
     "INSERT OR REPLACE INTO documents
-     (doc_id, file_path, content_hash, content_size, indexed_at)
-   VALUES (?1, ?2, ?3, ?4, ?5)",
+     (doc_id, content_hash, content_size, indexed_at)
+   VALUES (?1, ?2, ?3, ?4)",
     params![
       doc.id,
-      doc.file_path.to_string_lossy(),
       doc.content_hash,
       doc.content_size as i64,
       doc.indexed_at.to_rfc3339(),
@@ -118,7 +118,16 @@ fn insert_fts(conn: &Connection, chunk_ids: &[String], tokenized_texts: &[String
   Ok(())
 }
 
+fn insert_document_path(conn: &Connection, doc_id: &str, path: &str) -> rusqlite::Result<()> {
+  conn.execute(
+    "INSERT OR REPLACE INTO document_paths (doc_id, file_path) VALUES (?1, ?2)",
+    params![doc_id, path],
+  )?;
+  Ok(())
+}
+
 fn delete_document(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
+  conn.execute("DELETE FROM document_paths WHERE doc_id = ?1", params![doc_id])?;
   conn.execute("DELETE FROM documents WHERE doc_id = ?1", params![doc_id])?;
   Ok(())
 }
@@ -158,12 +167,17 @@ impl Storage for SqliteStorage {
       .execute_batch(
         "CREATE TABLE IF NOT EXISTS documents (
          -- Indexed file; one row per .txt/.md added via `docq add`.
-         -- Renaming the file changes doc_id -> reindex, keeping logic simple.
-         doc_id       TEXT PRIMARY KEY,  -- file-relative path, the Document.id
-         file_path    TEXT NOT NULL,     -- absolute or workspace-relative fs path
+         -- `doc_id` is a stable identifier derived from the file path.
+         doc_id       TEXT PRIMARY KEY,  -- stable document identifier
          content_hash TEXT NOT NULL,     -- SHA-256 of file bytes; drives incremental reindex
          content_size INTEGER NOT NULL,  -- byte length of the original file
          indexed_at   TEXT NOT NULL      -- RFC3339 UTC timestamp of last successful index
+       );
+       CREATE TABLE IF NOT EXISTS document_paths (
+         -- Separates the mutable file system path from the stable document id.
+         doc_id     TEXT PRIMARY KEY,
+         file_path  TEXT NOT NULL UNIQUE,
+         FOREIGN KEY (doc_id) REFERENCES documents(doc_id) ON DELETE CASCADE
        );
        CREATE TABLE IF NOT EXISTS chunks (
          -- Text block produced by the Chunker; `text` is the exact string embedded.
@@ -217,16 +231,15 @@ impl Storage for SqliteStorage {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     let row = conn
       .query_row(
-        "SELECT doc_id, file_path, content_hash, content_size, indexed_at
+        "SELECT doc_id, content_hash, content_size, indexed_at
        FROM documents WHERE doc_id = ?1",
         params![doc_id],
         |r| {
           Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
-            r.get::<_, i64>(3)?,
-            r.get::<_, String>(4)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, String>(3)?,
           ))
         },
       )
@@ -234,12 +247,11 @@ impl Storage for SqliteStorage {
       .map_err(map_rusqlite)?;
 
     match row {
-      Some((id, file_path, content_hash, content_size, ts)) => {
+      Some((id, content_hash, content_size, ts)) => {
         let indexed_at =
           DateTime::parse_from_rfc3339(&ts).map_err(|e| StoreError::Other(e.to_string()))?.with_timezone(&Utc);
         Ok(Some(Document {
           id,
-          file_path: file_path.into(),
           content_hash,
           content_size: content_size as usize,
           indexed_at,
@@ -252,23 +264,22 @@ impl Storage for SqliteStorage {
   fn list_documents(&self) -> Result<Vec<Document>> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     let mut stmt = conn
-      .prepare("SELECT doc_id, file_path, content_hash, content_size, indexed_at FROM documents")
+      .prepare("SELECT doc_id, content_hash, content_size, indexed_at FROM documents")
       .map_err(map_rusqlite)?;
 
-    let rows: Vec<(String, String, String, i64, String)> = stmt
-      .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+    let rows: Vec<(String, String, i64, String)> = stmt
+      .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
       .map_err(map_rusqlite)?
       .collect::<rusqlite::Result<Vec<_>>>()
       .map_err(map_rusqlite)?;
 
     let docs = rows
       .into_iter()
-      .map(|(id, file_path, content_hash, content_size, ts)| {
+      .map(|(id, content_hash, content_size, ts)| {
         let indexed_at =
           DateTime::parse_from_rfc3339(&ts).map_err(|e| StoreError::Other(e.to_string()))?.with_timezone(&Utc);
         Ok(Document {
           id,
-          file_path: file_path.into(),
           content_hash,
           content_size: content_size as usize,
           indexed_at,
@@ -276,6 +287,27 @@ impl Storage for SqliteStorage {
       })
       .collect::<Result<Vec<_>>>()?;
     Ok(docs)
+  }
+
+  fn get_document_paths(&self, doc_ids: &[String]) -> Result<HashMap<String, String>> {
+    if doc_ids.is_empty() {
+      return Ok(HashMap::new());
+    }
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    let placeholders = (0..doc_ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+      "SELECT doc_id, file_path FROM document_paths WHERE doc_id IN ({})",
+      placeholders
+    );
+    let mut stmt = conn.prepare(&sql).map_err(map_rusqlite)?;
+    let rows = stmt
+      .query_map(params_from_iter(doc_ids.iter()), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+      })
+      .map_err(map_rusqlite)?
+      .collect::<rusqlite::Result<Vec<_>>>()
+      .map_err(map_rusqlite)?;
+    Ok(rows.into_iter().collect())
   }
 
   fn get_chunks(&self, chunk_ids: &[String]) -> Result<Vec<Chunk>> {
@@ -431,6 +463,12 @@ impl StorageTx for SqliteTransaction {
     Ok(())
   }
 
+  fn set_document_path(&mut self, doc_id: &str, path: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    insert_document_path(&conn, doc_id, path).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
   fn delete_document(&mut self, doc_id: &str) -> Result<()> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     crate::sqlite::delete_document(&conn, doc_id).map_err(map_rusqlite)?;
@@ -514,7 +552,6 @@ mod tests {
   fn make_doc(id: &str, content: &str) -> Document {
     Document {
       id: id.to_string(),
-      file_path: format!("/tmp/{id}").into(),
       content_hash: format!("hash-{content}"),
       content_size: content.len(),
       indexed_at: Utc::now(),

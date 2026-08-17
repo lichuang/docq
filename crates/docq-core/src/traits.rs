@@ -7,6 +7,8 @@
 //! [`Reranker`]: crate::traits::Reranker
 //! [`Llm`]: crate::traits::Llm
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 
 use crate::error::Result;
@@ -55,6 +57,7 @@ pub trait Storage: Send + Sync {
 
   fn get_document(&self, doc_id: &str) -> Result<Option<Document>>;
   fn list_documents(&self) -> Result<Vec<Document>>;
+  fn get_document_paths(&self, doc_ids: &[String]) -> Result<HashMap<String, String>>;
   fn get_chunks(&self, chunk_ids: &[String]) -> Result<Vec<Chunk>>;
   fn search_vectors(&self, embedding: &[f32], top_k: usize) -> Result<Vec<(String, f32)>>;
   fn search_text(&self, query: &str, top_k: usize) -> Result<Vec<(String, f32)>>;
@@ -79,6 +82,7 @@ pub trait Storage: Send + Sync {
 /// store half-written.
 pub trait StorageTx {
   fn add_document(&mut self, doc: &Document) -> Result<()>;
+  fn set_document_path(&mut self, doc_id: &str, path: &str) -> Result<()>;
   fn delete_document(&mut self, doc_id: &str) -> Result<()>;
   fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()>;
   fn delete_chunks_by_doc(&mut self, doc_id: &str) -> Result<()>;

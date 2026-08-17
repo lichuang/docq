@@ -1,6 +1,7 @@
 //! Hybrid retrieval: BM25 + vector recall fused via Reciprocal Rank Fusion.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use docq_core::{
@@ -139,6 +140,14 @@ impl Retriever {
       }
     };
 
+    // ---- Resolve file paths for the retrieved chunks ----
+    let file_paths = {
+      let _step = self.config.verbose.start("resolve paths");
+      let doc_ids: Vec<String> =
+        chunk_map.values().map(|c| c.doc_id.clone()).collect::<HashSet<_>>().into_iter().collect();
+      self.config.storage.get_document_paths(&doc_ids)?
+    };
+
     // ---- Assemble SearchHit with per-stage ScoreExplain ----
     let hits = {
       let _step = self.config.verbose.start("assemble hits");
@@ -152,6 +161,7 @@ impl Retriever {
           let final_score = rerank_score.or(rrf_score).unwrap_or(0.0);
           Some(SearchHit {
             chunk: chunk.clone(),
+            file_path: file_paths.get(&chunk.doc_id).map(PathBuf::from).unwrap_or_default(),
             score: final_score,
             explain: ScoreExplain {
               bm25_score: bm25_map.get(&id).copied(),

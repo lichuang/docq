@@ -14,7 +14,7 @@ pub use reader::TextFileReader;
 pub use reader_registry::ReaderRegistry;
 pub use tokenizer::{JiebaSegmenter, jieba_tokenize};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -61,6 +61,7 @@ impl IndexStats {
 }
 
 struct PendingFile {
+  path: PathBuf,
   doc: Document,
   chunks: Vec<Chunk>,
   chunk_texts: Vec<String>,
@@ -147,7 +148,8 @@ impl Indexer {
   /// `PendingFile` ready for batched embedding and storage.
   fn prepare_file(&self, path: &Path, content: &str) -> Result<Option<PendingFile>> {
     let content_hash = sha256_hex(content);
-    let doc_id = path.to_string_lossy().to_string();
+    let path_str = path.to_string_lossy().to_string();
+    let doc_id = sha256_hex(&path_str);
 
     if let Some(existing) = self.storage.get_document(&doc_id)?
       && existing.content_hash == content_hash
@@ -174,13 +176,13 @@ impl Indexer {
 
     let doc = Document {
       id: doc_id,
-      file_path: path.to_path_buf(),
       content_hash,
       content_size: content.len(),
       indexed_at: Utc::now(),
     };
 
     Ok(Some(PendingFile {
+      path: path.to_path_buf(),
       doc,
       chunks,
       chunk_texts,
@@ -207,6 +209,7 @@ impl Indexer {
         tx.delete_chunks_by_doc(&pf.doc.id)?;
       }
       tx.add_document(&pf.doc)?;
+      tx.set_document_path(&pf.doc.id, &pf.path.to_string_lossy())?;
       tx.add_chunks(&pf.chunks)?;
       tx.add_vectors(&chunk_ids, &embeddings)?;
       tx.add_fts_chunks(&chunk_ids, &pf.tokenized_texts)?;

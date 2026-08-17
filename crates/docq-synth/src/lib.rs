@@ -82,7 +82,9 @@ impl Synthesizer {
           marker,
           source: format!(
             "{} (bytes {}-{})",
-            chunk.doc_id, chunk.byte_range.start, chunk.byte_range.end
+            hit.file_path.display(),
+            chunk.byte_range.start,
+            chunk.byte_range.end
           ),
         })
       })
