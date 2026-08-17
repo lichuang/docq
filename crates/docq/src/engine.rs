@@ -171,42 +171,23 @@ impl Engine {
 
   /// Open for indexing: loads embedding model only (~100 MB).
   pub async fn open_for_index(config: EngineConfig) -> Result<Self> {
-    let (components, _) = Self::build_base_components(&config).await?;
+    let (components, _) = Self::build_index_components(&config).await?;
     Ok(Self::new(components))
   }
 
   /// Open for search: loads embedding + reranker models (~1.1 GB).
   pub async fn open_for_search(config: EngineConfig) -> Result<Self> {
-    let (mut components, hub) = Self::build_base_components(&config).await?;
-    let rerank_spec = config.config.models.reranker.to_spec("reranker");
-    components.reranker = Some({
-      let _step = config.verbose.start("load reranker model");
-      Self::load_reranker(&hub, components.storage.as_ref(), &rerank_spec).await?
-    });
-
+    let (components, _) = Self::build_search_components(&config).await?;
     Ok(Self::new(components))
   }
 
   /// Open for ask: loads all models (~6 GB).
   pub async fn open_for_ask(config: EngineConfig) -> Result<Self> {
-    let (mut components, hub) = Self::build_base_components(&config).await?;
-    let rerank_spec = config.config.models.reranker.to_spec("reranker");
-    components.reranker = Some({
-      let _step = config.verbose.start("load reranker model");
-      Self::load_reranker(&hub, components.storage.as_ref(), &rerank_spec).await?
-    });
-
-    let llm_spec = config.config.models.llm.to_spec("chat");
-    let llm_config: LlmConfig = config.config.llm.clone().try_into()?;
-    components.llm = Some({
-      let _step = config.verbose.start("load LLM");
-      Self::load_llm(&hub, components.storage.as_ref(), &llm_spec, &llm_config).await?
-    });
-
+    let (components, _) = Self::build_ask_components(&config).await?;
     Ok(Self::new(components))
   }
 
-  async fn build_base_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
+  async fn build_index_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
     let hub = ModelHub::new(engine_config.model_cache_dir.clone());
     let storage = Self::open_storage(&engine_config.workspace_path)?;
     let emb_spec = engine_config.config.models.embedding.to_spec("embedding");
@@ -226,6 +207,29 @@ impl Engine {
       retrieval: engine_config.config.retrieval.clone(),
       verbose: engine_config.verbose,
     };
+
+    Ok((components, hub))
+  }
+
+  async fn build_search_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
+    let (mut components, hub) = Self::build_index_components(engine_config).await?;
+    let rerank_spec = engine_config.config.models.reranker.to_spec("reranker");
+    components.reranker = Some({
+      let _step = engine_config.verbose.start("load reranker model");
+      Self::load_reranker(&hub, components.storage.as_ref(), &rerank_spec).await?
+    });
+
+    Ok((components, hub))
+  }
+
+  async fn build_ask_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
+    let (mut components, hub) = Self::build_search_components(engine_config).await?;
+    let llm_spec = engine_config.config.models.llm.to_spec("chat");
+    let llm_config: LlmConfig = engine_config.config.llm.clone().try_into()?;
+    components.llm = Some({
+      let _step = engine_config.verbose.start("load LLM");
+      Self::load_llm(&hub, components.storage.as_ref(), &llm_spec, &llm_config).await?
+    });
 
     Ok((components, hub))
   }
