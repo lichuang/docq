@@ -171,21 +171,51 @@ impl Engine {
 
   /// Open for indexing: loads embedding model only (~100 MB).
   pub async fn open_for_index(config: EngineConfig) -> Result<Self> {
-    let EngineConfig {
-      workspace_path,
-      model_cache_dir,
-      config,
-      verbose,
-    } = config;
-    let storage = Self::open_storage(&workspace_path)?;
-    let hub = ModelHub::new(model_cache_dir);
-    let emb_spec = config.models.embedding.to_spec("embedding");
+    let (components, _) = Self::build_base_components(&config).await?;
+    Ok(Self::new(components))
+  }
+
+  /// Open for search: loads embedding + reranker models (~1.1 GB).
+  pub async fn open_for_search(config: EngineConfig) -> Result<Self> {
+    let (mut components, hub) = Self::build_base_components(&config).await?;
+    let rerank_spec = config.config.models.reranker.to_spec("reranker");
+    components.reranker = Some({
+      let _step = config.verbose.start("load reranker model");
+      Self::load_reranker(&hub, components.storage.as_ref(), &rerank_spec).await?
+    });
+
+    Ok(Self::new(components))
+  }
+
+  /// Open for ask: loads all models (~6 GB).
+  pub async fn open_for_ask(config: EngineConfig) -> Result<Self> {
+    let (mut components, hub) = Self::build_base_components(&config).await?;
+    let rerank_spec = config.config.models.reranker.to_spec("reranker");
+    components.reranker = Some({
+      let _step = config.verbose.start("load reranker model");
+      Self::load_reranker(&hub, components.storage.as_ref(), &rerank_spec).await?
+    });
+
+    let llm_spec = config.config.models.llm.to_spec("chat");
+    let llm_config: LlmConfig = config.config.llm.clone().try_into()?;
+    components.llm = Some({
+      let _step = config.verbose.start("load LLM");
+      Self::load_llm(&hub, components.storage.as_ref(), &llm_spec, &llm_config).await?
+    });
+
+    Ok(Self::new(components))
+  }
+
+  async fn build_base_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
+    let hub = ModelHub::new(engine_config.model_cache_dir.clone());
+    let storage = Self::open_storage(&engine_config.workspace_path)?;
+    let emb_spec = engine_config.config.models.embedding.to_spec("embedding");
     let (embedder, chunker) = {
-      let _step = verbose.start("load embedding model");
-      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?
+      let _step = engine_config.verbose.start("load embedding model");
+      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &engine_config.config.indexing).await?
     };
 
-    Ok(Self::new(EngineComponents {
+    let components = EngineComponents {
       storage,
       chunker,
       embedder,
@@ -193,83 +223,11 @@ impl Engine {
       reranker: None,
       llm: None,
       readers: Self::default_readers(),
-      retrieval: config.retrieval.clone(),
-      verbose,
-    }))
-  }
-
-  /// Open for search: loads embedding + reranker models (~1.1 GB).
-  pub async fn open_for_search(config: EngineConfig) -> Result<Self> {
-    let EngineConfig {
-      workspace_path,
-      model_cache_dir,
-      config,
-      verbose,
-    } = config;
-    let storage = Self::open_storage(&workspace_path)?;
-    let hub = ModelHub::new(model_cache_dir);
-    let emb_spec = config.models.embedding.to_spec("embedding");
-    let rerank_spec = config.models.reranker.to_spec("reranker");
-    let (embedder, chunker) = {
-      let _step = verbose.start("load embedding model");
-      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?
-    };
-    let reranker = {
-      let _step = verbose.start("load reranker model");
-      Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?
+      retrieval: engine_config.config.retrieval.clone(),
+      verbose: engine_config.verbose,
     };
 
-    Ok(Self::new(EngineComponents {
-      storage,
-      chunker,
-      embedder,
-      segmenter: Arc::new(JiebaSegmenter),
-      reranker: Some(reranker),
-      llm: None,
-      readers: Self::default_readers(),
-      retrieval: config.retrieval.clone(),
-      verbose,
-    }))
-  }
-
-  /// Open for ask: loads all models (~6 GB).
-  pub async fn open_for_ask(config: EngineConfig) -> Result<Self> {
-    let EngineConfig {
-      workspace_path,
-      model_cache_dir,
-      config,
-      verbose,
-    } = config;
-    let storage = Self::open_storage(&workspace_path)?;
-    let hub = ModelHub::new(model_cache_dir);
-    let emb_spec = config.models.embedding.to_spec("embedding");
-    let rerank_spec = config.models.reranker.to_spec("reranker");
-    let llm_spec = config.models.llm.to_spec("chat");
-    let llm_config: LlmConfig = config.llm.clone().try_into()?;
-    let (embedder, chunker) = {
-      let _step = verbose.start("load embedding model");
-      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &config.indexing).await?
-    };
-    let reranker = {
-      let _step = verbose.start("load reranker model");
-      Self::load_reranker(&hub, storage.as_ref(), &rerank_spec).await?
-    };
-    let llm = {
-      let _step = verbose.start("load LLM");
-      Self::load_llm(&hub, storage.as_ref(), &llm_spec, &llm_config).await?
-    };
-
-    Ok(Self::new(EngineComponents {
-      storage,
-      chunker,
-      embedder,
-      segmenter: Arc::new(JiebaSegmenter),
-      reranker: Some(reranker),
-      llm: Some(llm),
-      readers: Self::default_readers(),
-      retrieval: config.retrieval.clone(),
-      verbose,
-    }))
+    Ok((components, hub))
   }
 
   pub fn add_collection(&self, path: impl AsRef<Path>, name: &str) -> Result<()> {
