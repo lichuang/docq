@@ -10,6 +10,8 @@ pub const BGE_SMALL_ZH_V1_5_TOKENIZER_FILE: &str = "tokenizer.json";
 /// are silently truncated by the ONNX runtime, so `SentenceSplitter` must
 /// use this as `chunk_size` to avoid losing tail content.
 pub const BGE_SMALL_ZH_V1_5_MAX_TOKENS: usize = 1024;
+/// Output dimension of the default embedding vectors.
+pub const BGE_SMALL_ZH_V1_5_DIMENSION: usize = 512;
 
 // ---- Default reranker model: BAAI/bge-reranker-base ----
 

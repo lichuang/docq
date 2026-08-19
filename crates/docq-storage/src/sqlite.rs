@@ -43,6 +43,7 @@ impl SqliteStorage {
   pub fn open(path: impl AsRef<Path>) -> Result<Self> {
     ensure_vec_extension();
     let conn = Connection::open(path).map_err(map_rusqlite)?;
+    conn.execute_batch("PRAGMA busy_timeout = 5000;").map_err(map_rusqlite)?;
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
     })
@@ -51,6 +52,7 @@ impl SqliteStorage {
   pub fn open_in_memory() -> Result<Self> {
     ensure_vec_extension();
     let conn = Connection::open_in_memory().map_err(map_rusqlite)?;
+    conn.execute_batch("PRAGMA busy_timeout = 5000;").map_err(map_rusqlite)?;
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
     })
@@ -62,6 +64,40 @@ impl SqliteStorage {
   pub fn open_workspace(workspace: impl AsRef<Path>) -> Result<Self> {
     let path = workspace.as_ref().join(DB_FILE_NAME);
     Self::open(path)
+  }
+
+  fn init_vectors(&self, conn: &Connection, dimension: usize) -> Result<()> {
+    let expected_type = format!("FLOAT[{dimension}]");
+
+    let existing_sql: Option<String> = conn
+      .query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_chunks'",
+        [],
+        |r| r.get(0),
+      )
+      .optional()
+      .map_err(map_rusqlite)?;
+
+    if let Some(sql) = existing_sql {
+      if !sql.contains(&expected_type) {
+        return Err(
+          StoreError::Other(format!(
+            "vec_chunks dimension mismatch: existing table does not use {expected_type}"
+          ))
+          .into(),
+        );
+      }
+      return Ok(());
+    }
+
+    let sql = format!(
+      "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+         chunk_id  TEXT PRIMARY KEY,
+         embedding {expected_type} distance_metric=cosine
+       );"
+    );
+    conn.execute_batch(&sql).map_err(map_rusqlite)?;
+    Ok(())
   }
 }
 
@@ -161,7 +197,11 @@ fn set_model_version(conn: &Connection, role: &str, version: &ModelSpec) -> rusq
 }
 
 impl Storage for SqliteStorage {
-  fn init(&self) -> Result<()> {
+  fn init(&self, vector_dimension: usize) -> Result<()> {
+    if vector_dimension == 0 {
+      return Err(StoreError::Other("vector_dimension must be greater than 0".into()).into());
+    }
+
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     conn
       .execute_batch(
@@ -202,13 +242,6 @@ impl Storage for SqliteStorage {
          revision TEXT NOT NULL,      -- HuggingFace revision or commit hash
          checksum TEXT                -- optional content checksum for verifying downloads
        );
-       CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-         -- sqlite-vec virtual table; one row per embedded chunk, keyed by the same chunk_id
-         -- as `chunks`. Vectors are stored as packed native-endian f32 bytes via `vec_f32`.
-         -- `distance_metric=cosine` matches the design doc §10 for semantic similarity.
-         chunk_id  TEXT PRIMARY KEY,
-         embedding FLOAT[512] distance_metric=cosine
-       );
         CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
           -- FTS5 full-text index over jieba-pre-tokenised text.
           -- `text` here stores space-separated tokens (jieba output), NOT the raw chunk text.
@@ -224,7 +257,7 @@ impl Storage for SqliteStorage {
         );",
       )
       .map_err(map_rusqlite)?;
-    Ok(())
+    self.init_vectors(&conn, vector_dimension)
   }
 
   fn get_document(&self, doc_id: &str) -> Result<Option<Document>> {
@@ -576,7 +609,7 @@ mod tests {
   #[test]
   fn test_document_crud() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc1 = make_doc("doc1.txt", "hello world");
     let doc2 = make_doc("doc2.txt", "foo bar");
@@ -602,7 +635,7 @@ mod tests {
   #[test]
   fn test_chunk_crud() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "hello world");
     let c1 = make_chunk("c1", "doc1.txt", "hello", 0, 5);
@@ -625,7 +658,7 @@ mod tests {
   #[test]
   fn test_delete_chunks_cascades_vectors_and_fts() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
     let chunk = make_chunk("c1", "doc1.txt", "hello", 0, 5);
@@ -654,7 +687,7 @@ mod tests {
   #[test]
   fn test_model_version() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     assert!(storage.get_model_version("embedding").unwrap().is_none());
 
@@ -677,7 +710,7 @@ mod tests {
   #[test]
   fn test_vector_search() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
     let chunk = make_chunk("c0", "doc1.txt", "text", 0, 4);
@@ -711,7 +744,7 @@ mod tests {
   #[test]
   fn test_text_search() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
     let chunks = vec![
@@ -740,7 +773,7 @@ mod tests {
   #[test]
   fn test_transaction_commit() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
     let chunk = make_chunk("c1", "doc1.txt", "hello", 0, 5);
@@ -767,7 +800,7 @@ mod tests {
   #[test]
   fn test_transaction_rollback_on_drop() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
 
@@ -785,7 +818,7 @@ mod tests {
   #[test]
   fn test_transaction_commit_after_failure() {
     let storage = SqliteStorage::open_in_memory().unwrap();
-    storage.init().unwrap();
+    storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
     let chunk = make_chunk("c1", "doc1.txt", "hello", 0, 5);

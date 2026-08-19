@@ -163,7 +163,7 @@ mod tests {
 
   fn test_storage() -> SqliteStorage {
     let s = SqliteStorage::open_in_memory().unwrap();
-    s.init().unwrap();
+    s.init(512).unwrap();
     s
   }
 

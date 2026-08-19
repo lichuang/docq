@@ -119,7 +119,6 @@ impl Engine {
     std::fs::create_dir_all(workspace_path)
       .map_err(|e| docq_core::StoreError::Other(format!("create workspace dir: {e}")))?;
     let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_workspace(workspace_path)?);
-    storage.init()?;
     Ok(storage)
   }
 
@@ -195,6 +194,7 @@ impl Engine {
       let _step = engine_config.verbose.start("load embedding model");
       Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &engine_config.config.indexing).await?
     };
+    storage.init(embedder.dimension())?;
 
     let components = EngineComponents {
       storage,
@@ -361,7 +361,7 @@ mod tests {
 
   fn test_storage(tmp: &TempDir) -> Arc<dyn Storage> {
     let storage = Arc::new(SqliteStorage::open(tmp.path().join("test.db")).unwrap()) as Arc<dyn Storage>;
-    storage.init().unwrap();
+    storage.init(512).unwrap();
     storage
   }
 

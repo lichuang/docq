@@ -51,7 +51,9 @@ pub trait WordSegmenter: Send + Sync {
 }
 
 pub trait Storage: Send + Sync {
-  fn init(&self) -> Result<()>;
+  /// Initialize all storage tables. Pass `0` to skip creating the vector
+  /// table when no embedder is available yet.
+  fn init(&self, vector_dimension: usize) -> Result<()>;
 
   // ---- reads / queries ----
 
