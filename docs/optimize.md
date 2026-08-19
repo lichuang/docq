@@ -96,3 +96,69 @@
 6. **长期**：`docq serve` 常驻模式 + 进程级模型缓存
 
 这些改动基本都在现有架构内，不需要破坏 crate 分层。
+
+---
+
+## 7. 正确性与健壮性缺陷（P0，优先于性能优化）
+
+> 与上面 1-6 节的性能方向不同，本节是**已确认的正确性 bug 或设计未实现**。它们会导致检索结果静默错误或直接崩溃，应优先于任何性能优化处理。
+
+### 7.1 embedding 模型升级后旧向量静默错配（设计未实现）
+
+- **位置**：`docq-indexer/src/lib.rs`（`prepare_file` / `flush_batch`）、`docq-model/src/hub.rs`
+- **现状**：`prepare_file` 只对比 `content_hash` 跳过未变文件。`hub.ensure` 无条件 `set_model_version`，但**没有任何代码读取 `get_model_version` 来对比当前 spec 并触发重索引**。`get_model_version` 在整个代码库中只在测试里被调用。
+- **影响**：用户更换 embedding 模型（如 `bge-small-zh` → `bge-m3`）后，所有 chunk 向量都变了，但文件 hash 未变 → 全部被跳过，继续用旧模型向量做语义检索，结果静默错误。
+- **AGENTS.md 声称**"embedding 模型升级会触发显式重索引"，但该机制**未接线**。
+- **建议**：在 `index_directory` 开头对比 `storage.get_model_version("embedding")` 与当前 spec，不一致则强制全量重嵌入（忽略 `content_hash` 跳过逻辑）。
+
+### 7.2 `SentenceSplitter` 的 `byte_range` 与原文偏移错位
+
+- **位置**：`docq-indexer/src/chunker.rs`（`split_paragraphs` / `split_sentences` / `chunk`）
+- **现状**：
+  - `split_paragraphs` 用 `text.split("\n\n\n")` 切分，**丢弃分隔符且不追踪原始字节偏移**。
+  - `split_sentences` 把段落转成 `Vec<char>` 再按标点切，用 `chars[start..end].iter().collect()` **重新拼成 String**，丢失了相对原文的字节偏移。
+  - `chunk` 阶段用 `current.join("")` 拼接 units 并累加 `byte_pos`，但 units 是重新 collect 的 String，不是原始切片。
+- **影响**：`Chunk.byte_range` 是基于"重新拼接后的文本"计算的，与原始文件字节偏移不一致。`ask` 流程的引用 `"docs/a.txt (bytes 120-512)"` 会指向错误位置。
+- **建议**：改为基于 `char_indices` / `match_indices` 追踪真实字节偏移，或让 `split_sentences` 返回 `(text, start_byte, end_byte)` 三元组，chunk 阶段直接使用原始偏移。
+
+### 7.3 向量维度硬编码 512
+
+- **位置**：`docq-storage/src/sqlite.rs:196` `embedding FLOAT[512]`
+- **现状**：schema 写死 `[512]`，但 `embedder.dimension()` 是动态的，且 `registry.rs` 已声明支持 `BGELargeZHV15`(1024) / `BGEM3`(1024)。
+- **影响**：用 1024 维模型建表后插入向量直接失败。
+- **建议**：`init()` 时根据 `embedder.dimension()` 建表，或在 config 中固定维度并在加载时校验。
+
+### 7.4 错误类型全是 `Other(String)`，错误分类丢失
+
+- **位置**：`docq-core/src/error.rs` 全部子错误
+- **现状**：`ParseError` / `StoreError` / `EmbedError` / `RetrieveError` / `SynthError` / `LlmError` / `ModelError` 都只有一个 `Other(String)` 变体，`#[from]` 转换无处附着，分类是"假分类"。
+- **影响**：调用方无法按错误类型编程式处理（如区分"可重试的下载失败"与"致命配置错误"），限制了未来做重试/熔断。
+- **建议**：为每类补充 1-2 个真实变体（如 `StoreError::Io`、`ModelError::Download`、`LlmError::ContextOverflow`）。
+
+### 7.5 `bm25()` 分数语义注释误导
+
+- **位置**：`docq-retrieve/src/retriever.rs:43`、`docq-storage/src/sqlite.rs:339`
+- **现状**：注释声称 `bm25_score` "higher = more relevant"，但 SQLite FTS5 的 `bm25()` 返回**负分**（越相关越接近 0），`rank` 按升序排。
+- **影响**：当前 RRF 只看排名所以不影响正确性，但 `ScoreExplain.bm25_score` 展示成"越高越好"会误导调试。
+- **建议**：统一转成 `-bm25(...)` 或修正注释，让 `ScoreExplain` 的"higher is better"约定真正成立。
+
+### 7.6 `hub.ensure` 无条件写 `model_versions`
+
+- **位置**：`docq-model/src/hub.rs:20`
+- **现状**：`ensure` 每次都 `begin_tx` + `set_model_version`，即使模型没变。
+- **影响**：每次加载模型都多一次事务写，且掩盖了 7.1 的对比逻辑缺失。
+- **建议**：先 `get_model_version` 对比，相同则跳过写。
+
+---
+
+## 建议优先级（合并版）
+
+1. **正确性（P0）**：接线 `model_versions` 重索引触发（7.1）→ 修复 `SentenceSplitter` 字节偏移（7.2）→ 向量维度去硬编码（7.3）
+2. **存储**：WAL + 单次事务 batch 写入 + `chunks(doc_id)` 索引
+3. **检索**：BM25 和向量召回并行
+4. **模型层**：Embedder/Reranker 去 Mutex 或池化
+5. **问答**：上下文 token 预算 + 尾部截断
+6. **索引器**：流式读取、批量去重、减少重复 tokenize
+7. **长期**：`docq serve` 常驻模式 + 进程级模型缓存
+
+> 正确性缺陷（第 1 项）应优先于所有性能优化：它们会导致检索结果静默错误或直接崩溃，性能优化无法弥补。
