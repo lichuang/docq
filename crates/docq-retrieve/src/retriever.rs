@@ -28,12 +28,30 @@ pub struct RetrieverConfig {
 }
 
 pub struct Retriever {
-  config: RetrieverConfig,
+  storage: Arc<dyn Storage>,
+  embedder: Arc<dyn Embedder>,
+  segmenter: Arc<dyn WordSegmenter>,
+  reranker: Option<Arc<dyn Reranker>>,
+  bm25_top_k: usize,
+  vector_top_k: usize,
+  rrf_k: usize,
+  rerank_top_n: usize,
+  verbose: Verbose,
 }
 
 impl Retriever {
   pub fn new(config: RetrieverConfig) -> Self {
-    Self { config }
+    Self {
+      storage: config.storage,
+      embedder: config.embedder,
+      segmenter: config.segmenter,
+      reranker: config.reranker,
+      bm25_top_k: config.bm25_top_k,
+      vector_top_k: config.vector_top_k,
+      rrf_k: config.rrf_k,
+      rerank_top_n: config.rerank_top_n,
+      verbose: config.verbose,
+    }
   }
 
   /// Run a hybrid search: embed the query, recall from BM25 and vector
@@ -51,19 +69,19 @@ impl Retriever {
       return Ok(Vec::new());
     }
 
-    let _total = self.config.verbose.start("search");
+    let _total = self.verbose.start("search");
 
     // ---- Channel 1: BM25 lexical recall ----
     // Index time stored jieba-segmented text; query must be segmented the same
     // way so FTS5 matches on the same token boundaries.
     let segmented_query = {
-      let _step = self.config.verbose.start("segment query");
-      self.config.segmenter.segment(query)
+      let _step = self.verbose.start("segment query");
+      self.segmenter.segment(query)
     };
     let safe_query = sanitize_fts5_query(&segmented_query);
     let bm25_results = {
-      let _step = self.config.verbose.start("BM25 recall");
-      self.config.storage.search_text(&safe_query, self.config.bm25_top_k)?
+      let _step = self.verbose.start("BM25 recall");
+      self.storage.search_text(&safe_query, self.bm25_top_k)?
     };
 
     // ---- Channel 2: vector semantic recall ----
@@ -71,9 +89,8 @@ impl Retriever {
     // *distance* (lower = more similar). Convert to similarity so every
     // score in ScoreExplain follows the same "higher is better" convention.
     let query_embedding = {
-      let _step = self.config.verbose.start("embed query");
+      let _step = self.verbose.start("embed query");
       self
-        .config
         .embedder
         .embed(&[query.to_string()])
         .await?
@@ -83,8 +100,8 @@ impl Retriever {
     };
 
     let vector_raw = {
-      let _step = self.config.verbose.start("vector recall");
-      self.config.storage.search_vectors(&query_embedding, self.config.vector_top_k)?
+      let _step = self.verbose.start("vector recall");
+      self.storage.search_vectors(&query_embedding, self.vector_top_k)?
     };
     let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
     let vector_map: HashMap<String, f32> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
@@ -95,8 +112,8 @@ impl Retriever {
     // does not affect fusion. Pass the original score vectors; fusion
     // ignores their values and uses rank only.
     let fused = {
-      let _step = self.config.verbose.start("RRF fusion");
-      fusion::reciprocal_rank_fusion(&bm25_results, &vector_raw, self.config.rrf_k)
+      let _step = self.verbose.start("RRF fusion");
+      fusion::reciprocal_rank_fusion(&bm25_results, &vector_raw, self.rrf_k)
     };
     if fused.is_empty() {
       return Ok(Vec::new());
@@ -107,10 +124,10 @@ impl Retriever {
     // ---- Determine fetch depth, rerank, and final ordering in one branch ----
     // Without a reranker: fetch top_k, keep RRF order.
     // With a reranker: fetch rerank_top_n, cross-encoder rerank, sort by score.
-    let (chunk_map, rerank_map, ordered) = match &self.config.reranker {
+    let (chunk_map, rerank_map, ordered) = match &self.reranker {
       None => {
         let ids: Vec<String> = fused.iter().take(top_k).map(|(id, _)| id.clone()).collect();
-        let chunks = self.config.storage.get_chunks(&ids)?;
+        let chunks = self.storage.get_chunks(&ids)?;
         let map = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
         (map, HashMap::new(), fused)
       }
@@ -118,18 +135,18 @@ impl Retriever {
         // The reranker receives the raw query (not jieba-segmented) because it
         // runs its own BERT-style tokenization. It produces a single relevance
         // score per (query, chunk) pair — higher is better, same direction as RRF.
-        let ids: Vec<String> = fused.iter().take(self.config.rerank_top_n).map(|(id, _)| id.clone()).collect();
-        let chunks = self.config.storage.get_chunks(&ids)?;
+        let ids: Vec<String> = fused.iter().take(self.rerank_top_n).map(|(id, _)| id.clone()).collect();
+        let chunks = self.storage.get_chunks(&ids)?;
         let chunk_map: HashMap<String, Chunk> = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
 
         let rerank_chunks: Vec<Chunk> = ids.iter().filter_map(|id| chunk_map.get(id).cloned()).collect();
         let scored: Vec<ScoredChunk> = {
-          let _step = self.config.verbose.start("rerank");
+          let _step = self.verbose.start("rerank");
           reranker.rerank(query, &rerank_chunks).await?
         };
         let rerank_map: HashMap<String, f32> = scored.into_iter().map(|sc| (sc.chunk.id, sc.score)).collect();
 
-        let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.config.rerank_top_n).collect();
+        let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.rerank_top_n).collect();
         sorted.sort_by(|a, b| {
           let ra = rerank_map.get(&a.0).copied().unwrap_or(0.0);
           let rb = rerank_map.get(&b.0).copied().unwrap_or(0.0);
@@ -142,15 +159,15 @@ impl Retriever {
 
     // ---- Resolve file paths for the retrieved chunks ----
     let file_paths = {
-      let _step = self.config.verbose.start("resolve paths");
+      let _step = self.verbose.start("resolve paths");
       let doc_ids: Vec<String> =
         chunk_map.values().map(|c| c.doc_id.clone()).collect::<HashSet<_>>().into_iter().collect();
-      self.config.storage.get_document_paths(&doc_ids)?
+      self.storage.get_document_paths(&doc_ids)?
     };
 
     // ---- Assemble SearchHit with per-stage ScoreExplain ----
     let hits = {
-      let _step = self.config.verbose.start("assemble hits");
+      let _step = self.verbose.start("assemble hits");
       ordered
         .into_iter()
         .take(top_k)
