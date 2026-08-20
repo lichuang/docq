@@ -39,6 +39,14 @@ pub struct Retriever {
   verbose: Verbose,
 }
 
+/// Borrowed score lookup maps used when assembling `SearchHit`s.
+struct ScoreMaps<'a> {
+  bm25: &'a HashMap<String, f32>,
+  vector: &'a HashMap<String, f32>,
+  rrf: &'a HashMap<String, f32>,
+  rerank: &'a HashMap<String, f32>,
+}
+
 impl Retriever {
   pub fn new(config: RetrieverConfig) -> Self {
     Self {
@@ -54,40 +62,26 @@ impl Retriever {
     }
   }
 
-  /// Run a hybrid search: embed the query, recall from BM25 and vector
-  /// stores, fuse with RRF, optionally rerank with a cross-encoder, then
-  /// return the top-k chunks with full score breakdowns.
+  /// Lexical recall using BM25 over the FTS5 index.
   ///
-  /// Score directions in `ScoreExplain` are unified to "higher is better":
-  /// - `bm25_score`: raw FTS5 BM25 score (higher = more relevant)
-  /// - `vector_score`: derived similarity = `1.0 - distance` (higher = closer)
-  /// - `rrf_score`: RRF fused score (higher = better rank)
-  /// - `rerank_score` / `final_score`: cross-encoder score (higher = more
-  ///   relevant); when no reranker is configured, `final_score = rrf_score`.
-  pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
-    if query.trim().is_empty() {
-      return Ok(Vec::new());
-    }
-
-    let _total = self.verbose.start("search");
-
-    // ---- Channel 1: BM25 lexical recall ----
-    // Index time stored jieba-segmented text; query must be segmented the same
-    // way so FTS5 matches on the same token boundaries.
+  /// Segments the query the same way as the indexed text, escapes FTS5
+  /// special characters, and queries the storage layer for BM25 scores.
+  fn bm25_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
     let segmented_query = {
       let _step = self.verbose.start("segment query");
       self.segmenter.segment(query)
     };
     let safe_query = sanitize_fts5_query(&segmented_query);
-    let bm25_results = {
-      let _step = self.verbose.start("BM25 recall");
-      self.storage.search_text(&safe_query, self.bm25_top_k)?
-    };
+    let _step = self.verbose.start("BM25 recall");
+    self.storage.search_text(&safe_query, self.bm25_top_k)
+  }
 
-    // ---- Channel 2: vector semantic recall ----
-    // Embed the query, then KNN-search sqlite-vec which returns cosine
-    // *distance* (lower = more similar). Convert to similarity so every
-    // score in ScoreExplain follows the same "higher is better" convention.
+  /// Semantic recall using dense vector KNN search.
+  ///
+  /// Embeds the query and searches the sqlite-vec `vec_chunks` table.
+  /// Returns `(chunk_id, cosine_distance)` tuples. The caller is responsible
+  /// for converting distance to similarity.
+  async fn vector_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
     let query_embedding = {
       let _step = self.verbose.start("embed query");
       self
@@ -98,38 +92,33 @@ impl Retriever {
         .next()
         .ok_or_else(|| EmbedError::Other("empty embedding result".into()))?
     };
+    let _step = self.verbose.start("vector recall");
+    self.storage.search_vectors(&query_embedding, self.vector_top_k)
+  }
 
-    let vector_raw = {
-      let _step = self.verbose.start("vector recall");
-      self.storage.search_vectors(&query_embedding, self.vector_top_k)?
-    };
-    let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
-    let vector_map: HashMap<String, f32> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
-
-    // ---- RRF fusion ----
-    // RRF uses only rank positions, not raw scores, so the directional
-    // difference between BM25 (higher better) and distance (lower better)
-    // does not affect fusion. Pass the original score vectors; fusion
-    // ignores their values and uses rank only.
-    let fused = {
-      let _step = self.verbose.start("RRF fusion");
-      fusion::reciprocal_rank_fusion(&bm25_results, &vector_raw, self.rrf_k)
-    };
-    if fused.is_empty() {
-      return Ok(Vec::new());
-    }
-
-    let rrf_map: HashMap<String, f32> = fused.iter().cloned().collect();
-
-    // ---- Determine fetch depth, rerank, and final ordering in one branch ----
-    // Without a reranker: fetch top_k, keep RRF order.
-    // With a reranker: fetch rerank_top_n, cross-encoder rerank, sort by score.
-    let (chunk_map, rerank_map, ordered) = match &self.reranker {
+  /// Resolve full chunk content and decide the final result order.
+  ///
+  /// If a reranker is configured, the top `rerank_top_n` RRF results are
+  /// scored by the cross-encoder and re-sorted by that score. Otherwise the
+  /// RRF order is preserved and only the top `top_k` chunks are fetched.
+  ///
+  /// Returns:
+  /// - `chunk_map`: `chunk_id -> Chunk` lookup for the selected candidates.
+  /// - `rerank_map`: `chunk_id -> reranker score`, empty when no reranker.
+  /// - `ordered`: final ordering as `(chunk_id, _)` tuples; the score field is
+  ///   a placeholder and is resolved later from `rerank_map` or `rrf_map`.
+  async fn prepare_candidates(
+    &self,
+    query: &str,
+    fused: Vec<(String, f32)>,
+    top_k: usize,
+  ) -> Result<(HashMap<String, Chunk>, HashMap<String, f32>, Vec<(String, f32)>)> {
+    match &self.reranker {
       None => {
         let ids: Vec<String> = fused.iter().take(top_k).map(|(id, _)| id.clone()).collect();
         let chunks = self.storage.get_chunks(&ids)?;
         let map = chunks.into_iter().map(|c| (c.id.clone(), c)).collect();
-        (map, HashMap::new(), fused)
+        Ok((map, HashMap::new(), fused))
       }
       Some(reranker) => {
         // The reranker receives the raw query (not jieba-segmented) because it
@@ -153,46 +142,135 @@ impl Retriever {
           rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        (chunk_map, rerank_map, sorted)
+        Ok((chunk_map, rerank_map, sorted))
       }
-    };
+    }
+  }
 
-    // ---- Resolve file paths for the retrieved chunks ----
-    let file_paths = {
-      let _step = self.verbose.start("resolve paths");
-      let doc_ids: Vec<String> =
-        chunk_map.values().map(|c| c.doc_id.clone()).collect::<HashSet<_>>().into_iter().collect();
-      self.storage.get_document_paths(&doc_ids)?
+  /// Resolve source file paths for the documents referenced by the retrieved chunks.
+  fn resolve_file_paths(&self, chunk_map: &HashMap<String, Chunk>) -> Result<HashMap<String, String>> {
+    let _step = self.verbose.start("resolve paths");
+    let doc_ids: Vec<String> =
+      chunk_map.values().map(|c| c.doc_id.clone()).collect::<HashSet<_>>().into_iter().collect();
+    self.storage.get_document_paths(&doc_ids)
+  }
+
+  /// Build the final `SearchHit` list from ordered chunk IDs and score maps.
+  ///
+  /// `ordered` contains chunk IDs in the desired output order. The actual score
+  /// for each hit is taken from `scores.rerank` if available, otherwise
+  /// `scores.rrf`. Per-stage scores from BM25 and vector recall are attached
+  /// via `ScoreExplain`.
+  fn assemble_hits(
+    &self,
+    ordered: Vec<(String, f32)>,
+    top_k: usize,
+    chunk_map: &HashMap<String, Chunk>,
+    file_paths: &HashMap<String, String>,
+    scores: &ScoreMaps<'_>,
+  ) -> Vec<SearchHit> {
+    let _step = self.verbose.start("assemble hits");
+    ordered
+      .into_iter()
+      .take(top_k)
+      .filter_map(|(id, _)| {
+        let chunk = chunk_map.get(&id)?;
+        let rrf_score = scores.rrf.get(&id).copied();
+        let rerank_score = scores.rerank.get(&id).copied();
+        let final_score = rerank_score.or(rrf_score).unwrap_or(0.0);
+        Some(SearchHit {
+          chunk: chunk.clone(),
+          file_path: file_paths.get(&chunk.doc_id).map(PathBuf::from).unwrap_or_default(),
+          score: final_score,
+          explain: ScoreExplain {
+            bm25_score: scores.bm25.get(&id).copied(),
+            vector_score: scores.vector.get(&id).copied(),
+            rrf_score,
+            rerank_score,
+            final_score,
+          },
+        })
+      })
+      .collect()
+  }
+
+  /// Hybrid search entry point.
+  ///
+  /// The overall pipeline is:
+  ///
+  /// 1. **BM25 lexical recall** — segment the query the same way as the
+  ///    indexed text (jieba), escape FTS5 special characters, and search the
+  ///    `fts_chunks` table.
+  /// 2. **Vector semantic recall** — embed the query and run a KNN search on
+  ///    `vec_chunks` using cosine distance. The distance is converted to a
+  ///    similarity score so that all scores follow the "higher is better"
+  ///    convention.
+  /// 3. **RRF fusion** — combine BM25 and vector rankings with Reciprocal
+  ///    Rank Fusion. Only ranks matter here, not raw scores.
+  /// 4. **Optional reranking** — if a cross-encoder reranker is configured,
+  ///    score the top `rerank_top_n` fused chunks and re-sort by the rerank
+  ///    score.
+  /// 5. **Enrichment** — fetch the full chunk text from `chunks` and resolve
+  ///    each chunk's source file path from `document_paths`.
+  /// 6. **Assembly** — build `SearchHit`s with per-stage `ScoreExplain`.
+  ///
+  /// Score directions in `ScoreExplain` are unified to "higher is better":
+  /// - `bm25_score`: raw FTS5 BM25 score (higher = more relevant)
+  /// - `vector_score`: derived similarity = `1.0 - distance` (higher = closer)
+  /// - `rrf_score`: RRF fused score (higher = better rank)
+  /// - `rerank_score` / `final_score`: cross-encoder score (higher = more
+  ///   relevant); when no reranker is configured, `final_score = rrf_score`.
+  pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
+    if query.trim().is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let _total = self.verbose.start("search");
+
+    // ---- Channel 1: BM25 lexical recall ----
+    let bm25_results = self.bm25_recall(query)?;
+
+    // ---- Channel 2: vector semantic recall ----
+    let vector_raw = self.vector_recall(query).await?;
+
+    // ---- RRF fusion ----
+    // RRF uses only rank positions, not raw scores, so the directional
+    // difference between BM25 (higher better) and distance (lower better)
+    // does not affect fusion. Pass the original score vectors; fusion
+    // ignores their values and uses rank only.
+    let fused = {
+      let _step = self.verbose.start("RRF fusion");
+      fusion::reciprocal_rank_fusion(&[&bm25_results, &vector_raw], self.rrf_k)
     };
+    if fused.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    let rrf_map: HashMap<String, f32> = fused.iter().cloned().collect();
+
+    // ---- Resolve full chunks and decide final ordering ----
+    let (chunk_map, rerank_map, ordered) = self.prepare_candidates(query, fused, top_k).await?;
+
+    // ---- Resolve source file paths for the retrieved chunks ----
+    let file_paths = self.resolve_file_paths(&chunk_map)?;
+
+    // Build lookup maps for per-channel scores shown in ScoreExplain.
+    let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
+    let vector_map: HashMap<String, f32> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
 
     // ---- Assemble SearchHit with per-stage ScoreExplain ----
-    let hits = {
-      let _step = self.verbose.start("assemble hits");
-      ordered
-        .into_iter()
-        .take(top_k)
-        .filter_map(|(id, _)| {
-          let chunk = chunk_map.get(&id)?;
-          let rrf_score = rrf_map.get(&id).copied();
-          let rerank_score = rerank_map.get(&id).copied();
-          let final_score = rerank_score.or(rrf_score).unwrap_or(0.0);
-          Some(SearchHit {
-            chunk: chunk.clone(),
-            file_path: file_paths.get(&chunk.doc_id).map(PathBuf::from).unwrap_or_default(),
-            score: final_score,
-            explain: ScoreExplain {
-              bm25_score: bm25_map.get(&id).copied(),
-              vector_score: vector_map.get(&id).copied(),
-              rrf_score,
-              rerank_score,
-              final_score,
-            },
-          })
-        })
-        .collect()
-    };
-
-    Ok(hits)
+    Ok(self.assemble_hits(
+      ordered,
+      top_k,
+      &chunk_map,
+      &file_paths,
+      &ScoreMaps {
+        bm25: &bm25_map,
+        vector: &vector_map,
+        rrf: &rrf_map,
+        rerank: &rerank_map,
+      },
+    ))
   }
 }
 
