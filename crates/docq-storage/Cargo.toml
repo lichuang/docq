@@ -16,3 +16,4 @@ thiserror = { workspace = true }
 rusqlite = { workspace = true }
 sqlite-vec = { workspace = true }
 chrono = { workspace = true }
+log = { workspace = true }

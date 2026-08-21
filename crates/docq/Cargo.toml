@@ -26,6 +26,8 @@ dirs = { workspace = true }
 toml = { workspace = true }
 tokenizers = { workspace = true }
 async-trait = { workspace = true }
+log = { workspace = true }
+flexi_logger = { workspace = true }
 
 [features]
 default = ["pdf", "docx"]

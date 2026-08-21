@@ -17,6 +17,7 @@ docq-storage = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+log = { workspace = true }
 
 [dev-dependencies]
 docq-indexer = { workspace = true }

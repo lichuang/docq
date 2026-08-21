@@ -81,12 +81,42 @@ impl TryFrom<LlmGenerationConfig> for LlmConfig {
   }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+  /// Log level filter (e.g. "info", "debug", "warn"). Supports `RUST_LOG`-style
+  /// target filtering like "docq=debug,docq_core=info".
+  pub level: String,
+  /// Optional log file path. If relative, resolved against the workspace.
+  /// Defaults to `<workspace>/docq.log` when omitted.
+  pub file: Option<PathBuf>,
+  /// Rotate the log file when it exceeds this size in megabytes.
+  pub rotation_size_mb: usize,
+  /// Maximum number of rotated log files to keep.
+  pub max_files: usize,
+  /// Also print log messages to the terminal while writing to file.
+  pub duplicate_to_stderr: bool,
+}
+
+impl Default for LoggingConfig {
+  fn default() -> Self {
+    Self {
+      level: "info".into(),
+      file: None,
+      rotation_size_mb: 10,
+      max_files: 5,
+      duplicate_to_stderr: false,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DocqConfig {
   pub models: ModelsConfig,
   pub indexing: IndexingConfig,
   pub retrieval: RetrievalConfig,
   pub llm: LlmGenerationConfig,
+  #[serde(default)]
+  pub logging: LoggingConfig,
 }
 
 impl Default for ModelEntry {

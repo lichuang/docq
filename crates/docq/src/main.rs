@@ -5,12 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use config::DocqConfig;
+use config::{DocqConfig, LoggingConfig};
 
 use clap::{Parser, Subcommand};
 use docq_core::{EngineStatus, Storage, Verbose};
 use docq_model::BGE_SMALL_ZH_V1_5_DIMENSION;
 use docq_storage::SqliteStorage;
+use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming, WriteMode};
 use serde::Serialize;
 
 pub use engine::{Engine, EngineComponents, EngineConfig};
@@ -37,6 +38,14 @@ struct Cli {
   /// Enable verbose progress output (use -vv for even more detail).
   #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count)]
   verbose: u8,
+
+  /// Log file path (default: <workspace>/docq.log). Overrides the config file.
+  #[arg(long, global = true)]
+  log_file: Option<PathBuf>,
+
+  /// Also print log messages to stderr while writing to the log file.
+  #[arg(long, global = true)]
+  log_stdout: bool,
 
   #[command(subcommand)]
   command: Commands,
@@ -175,12 +184,77 @@ async fn main() {
       process::exit(1);
     }
   };
+
+  let _logger = match init_logger(&config.logging, &workspace, cli.log_file.as_deref(), cli.log_stdout) {
+    Ok(handle) => handle,
+    Err(e) => {
+      print_error_json(&e.to_string());
+      process::exit(1);
+    }
+  };
+
+  log::info!("docq v{} starting", env!("CARGO_PKG_VERSION"));
+
   let verbose = Verbose(cli.verbose > 0);
 
   if let Err(e) = run_command(&cli.command, &workspace, &model_cache, config, verbose).await {
     print_error_json(&e.to_string());
     process::exit(1);
   }
+}
+
+/// Initialize the file logger.
+///
+/// The log file path is resolved in this order:
+/// 1. `--log-file` CLI argument.
+/// 2. `logging.file` from `config.toml`.
+/// 3. `<workspace>/docq.log` as the default.
+///
+/// Relative paths are resolved against the workspace. The log file is rotated
+/// by size and old rotated files are cleaned up automatically.
+fn init_logger(
+  logging: &LoggingConfig,
+  workspace: &Path,
+  log_file: Option<&Path>,
+  log_stdout: bool,
+) -> anyhow::Result<flexi_logger::LoggerHandle> {
+  let log_path = log_file
+    .map(PathBuf::from)
+    .or_else(|| logging.file.clone())
+    .unwrap_or_else(|| workspace.join("docq.log"));
+  let log_path = if log_path.is_absolute() {
+    log_path
+  } else {
+    workspace.join(log_path)
+  };
+
+  let parent = log_path.parent().unwrap_or_else(|| Path::new("."));
+  fs::create_dir_all(parent)?;
+
+  let directory = log_path.parent().and_then(|p| p.to_str()).unwrap_or(".");
+  let basename = log_path.file_stem().and_then(|s| s.to_str()).unwrap_or("docq");
+
+  let duplicate = if log_stdout || logging.duplicate_to_stderr {
+    Duplicate::All
+  } else {
+    Duplicate::None
+  };
+
+  let rotation_size = logging.rotation_size_mb as u64 * 1024 * 1024;
+
+  let logger = Logger::try_with_env_or_str(&logging.level)?
+    .log_to_file(FileSpec::default().directory(directory).basename(basename))
+    .rotate(
+      Criterion::Size(rotation_size),
+      Naming::Numbers,
+      Cleanup::KeepLogFiles(logging.max_files),
+    )
+    .duplicate_to_stderr(duplicate)
+    .write_mode(WriteMode::BufferAndFlush)
+    .start()
+    .map_err(|e| anyhow::anyhow!("init logger: {e}"))?;
+
+  Ok(logger)
 }
 
 /// Ensure the global config directory and `config.toml` exist.

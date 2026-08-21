@@ -953,6 +953,8 @@ dependencies = [
  "docq-retrieve",
  "docq-storage",
  "docq-synth",
+ "flexi_logger",
+ "log",
  "serde",
  "serde_json",
  "tempfile",
@@ -967,6 +969,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "log",
  "serde",
  "thiserror 1.0.69",
 ]
@@ -982,6 +985,7 @@ dependencies = [
  "docq-storage",
  "glob",
  "jieba-rs",
+ "log",
  "lopdf",
  "pdf-extract",
  "quick-xml",
@@ -1005,6 +1009,7 @@ dependencies = [
  "fastembed",
  "hf-hub 0.3.2",
  "llama-cpp-2",
+ "log",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -1019,6 +1024,7 @@ dependencies = [
  "docq-indexer",
  "docq-model",
  "docq-storage",
+ "log",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -1030,6 +1036,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "docq-core",
+ "log",
  "rusqlite",
  "sqlite-vec",
  "thiserror 1.0.69",
@@ -1045,6 +1052,7 @@ dependencies = [
  "docq-model",
  "docq-retrieve",
  "docq-storage",
+ "log",
  "regex",
  "tempfile",
  "thiserror 1.0.69",
@@ -1252,6 +1260,19 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "flexi_logger"
+version = "0.29.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88a5a6882b2e137c4f2664562995865084eb5a00611fba30c582ef10354c4ad8"
+dependencies = [
+ "chrono",
+ "log",
+ "nu-ansi-term",
+ "regex",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2479,6 +2500,15 @@ name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
+
+[[package]]
+name = "nu-ansi-term"
+version = "0.50.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+dependencies = [
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "num-bigint"
