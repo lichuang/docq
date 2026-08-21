@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use docq_core::{EngineStatus, Storage, Verbose};
 use docq_model::BGE_SMALL_ZH_V1_5_DIMENSION;
 use docq_storage::SqliteStorage;
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming, WriteMode};
+use flexi_logger::{Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, Naming, Record, WriteMode};
 use serde::Serialize;
 
 pub use engine::{Engine, EngineComponents, EngineConfig};
@@ -195,6 +195,9 @@ async fn main() {
 
   log::info!("docq v{} starting", env!("CARGO_PKG_VERSION"));
 
+  let logs_to_terminal = cli.log_stdout || config.logging.duplicate_to_stderr;
+  docq_core::set_log_terminal_output(logs_to_terminal);
+
   let verbose = Verbose(cli.verbose > 0);
 
   if let Err(e) = run_command(&cli.command, &workspace, &model_cache, config, verbose).await {
@@ -212,6 +215,13 @@ async fn main() {
 ///
 /// Relative paths are resolved against the workspace. The log file is rotated
 /// by size and old rotated files are cleaned up automatically.
+/// Custom log format that prints the target (rather than the module path)
+/// so that verbose progress messages can be emitted with a consistent
+/// `LEVEL [docq] message` appearance.
+fn log_format(w: &mut dyn std::io::Write, _now: &mut DeferredNow, record: &Record) -> std::io::Result<()> {
+  write!(w, "{} [{}] {}", record.level(), record.target(), record.args())
+}
+
 fn init_logger(
   logging: &LoggingConfig,
   workspace: &Path,
@@ -250,6 +260,7 @@ fn init_logger(
       Cleanup::KeepLogFiles(logging.max_files),
     )
     .duplicate_to_stderr(duplicate)
+    .format(log_format)
     .write_mode(WriteMode::BufferAndFlush)
     .start()
     .map_err(|e| anyhow::anyhow!("init logger: {e}"))?;
