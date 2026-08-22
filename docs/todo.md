@@ -21,22 +21,20 @@
 - 文件：`crates/docq-storage/src/sqlite.rs`、`crates/docq-core/src/traits.rs`、`crates/docq-indexer/src/lib.rs`
 - 改动：新增 `chunk_documents(chunk_id, doc_id)` 多对多关联表，从 `chunks` 表移除 `doc_id` 列。`insert_chunks` 改为 `INSERT OR IGNORE`（共享文本只存一次）。新增 `StorageTx::add_chunk_documents` 方法。`delete_chunks_by_doc` 改为从 `chunk_documents` 删除关联，仅当 chunk 无任何文档引用时才清理 `chunks`/`vec_chunks`/`fts_chunks`。`get_chunks` 通过子查询从 `chunk_documents` 填充 `doc_id`。新增测试 `test_shared_chunk_survives_deleting_one_doc` 验证共享 chunk 在删除一个文档后仍存在。`cargo test -p docq-storage` 10/10 通过。
 
-### P1-4. SQLite 外键未启用 — `ON DELETE CASCADE` 形同虚设
+### P1-4. ~~SQLite 外键未启用 — `ON DELETE CASCADE` 形同虚设~~ ✅ 已完成
 
 - 文件：`crates/docq-storage/src/sqlite.rs`
-- 现状：从未执行 `PRAGMA foreign_keys = ON`。`delete_document` 手动先删 `document_paths` 再删 `documents` 绕过，但直接删 `documents` 行不会级联清理。
-- 修复：open 时执行 `PRAGMA foreign_keys = ON`。
+- 改动：`open` 和 `open_in_memory` 的 PRAGMA 批处理中增加 `PRAGMA foreign_keys = ON`。
 
 ### P1-5. ~~无增量删除 — 已删除文件不会从索引中移除~~ ✅ 已完成
 
 - 文件：`crates/docq-indexer/src/lib.rs`、`crates/docq/src/main.rs`
 - 改动：`index_directory` 新增 tombstone sweep — 在索引前先 `list_documents()` + `get_document_paths()`，对比磁盘实际文件，删除不再存在的文档（通过 `delete_document` + `delete_chunks_by_doc`）。`IndexStats` 新增 `files_removed` 字段，CLI 输出显示 removed 计数。新增测试 `test_index_directory_removes_deleted_files`。
 
-### P1-6. `embedding_to_bytes` 用 native endian — 跨架构 DB 不可移植
+### P1-6. ~~`embedding_to_bytes` 用 native endian — 跨架构 DB 不可移植~~ ✅ 已完成
 
-- 文件：`crates/docq-storage/src/sqlite.rs:28-34`
-- 现状：`to_ne_bytes()`，DB 文件从 x86 拷到 ARM 向量字节序错误，余弦距离全错。
-- 修复：改用 `to_le_bytes()`。
+- 文件：`crates/docq-storage/src/sqlite.rs`
+- 改动：`embedding_to_bytes` 从 `to_ne_bytes()` 改为 `to_le_bytes()`，确保 DB 文件跨架构一致。
 
 ## 二、性能优化
 
@@ -45,11 +43,10 @@
 - 文件：`crates/docq-retrieve/src/retriever.rs`
 - 改动：将 BM25 抽为 `async fn bm25_recall`，内部用 `tokio::task::spawn_blocking` 在阻塞线程跑同步的 jieba 分词 + FTS5 查询，`search` 中用 `tokio::join!` 与 `vector_recall` 并行执行。
 
-### P2-8. 未启用 WAL 模式 — 读写互斥
+### P2-8. ~~未启用 WAL 模式 — 读写互斥~~ ✅ 已完成
 
-- 文件：`crates/docq-storage/src/sqlite.rs:46`
-- 现状：只设了 `busy_timeout`，无 `PRAGMA journal_mode=WAL`。写事务阻塞所有读。
-- 修复：open 时执行 `PRAGMA journal_mode=WAL`。
+- 文件：`crates/docq-storage/src/sqlite.rs`
+- 改动：`open` 的 PRAGMA 批处理中增加 `PRAGMA journal_mode = WAL`（`open_in_memory` 不加 — 内存数据库无文件 WAL）。
 
 ### P2-9. ~~`SentenceSplitter::token_count` 重复计算~~ ✅ 已完成
 
@@ -106,11 +103,10 @@
 - 文件：`crates/docq/src/config.rs`、`crates/docq/src/engine.rs`
 - 改动：`ModelEntry` 新增 `tokenizer_filename` 字段（`#[serde(default)]` 向后兼容旧 config.toml）。`build_chunker` 和 `load_embedding` 改为接收 `tokenizer_filename` 参数，从 `engine_config.config.models.embedding.tokenizer_filename` 传入。删除 `engine.rs` 中对 `BGE_SMALL_ZH_V1_5_TOKENIZER_FILE` 常量的硬编码引用。
 
-### P2-18. `SentenceSplitter::split_paragraphs` 用三个换行 `\n\n\n`
+### P2-18. ~~`SentenceSplitter::split_paragraphs` 用三个换行 `\n\n\n`~~ ✅ 已确认无需修改
 
 - 文件：`crates/docq-indexer/src/chunker.rs:24`
-- 现状：`text.split("\n\n\n")`，LlamaIndex 的 SentenceSplitter 默认用双换行 `\n\n`。本该分段的内容不分段，影响 chunk 边界质量。
-- 修复：确认是否有意为之；若非，改为 `\n\n`。
+- 结论：LlamaIndex 的 `SentenceSplitter` 测试用例（`test_sentence_splitter.py::test_paragraphs`）明确使用 `\n\n\n` 分隔段落，当前实现与 LlamaIndex 行为一致，不是 bug。
 
 ## 四、Minor
 

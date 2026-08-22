@@ -28,7 +28,7 @@ fn ensure_vec_extension() {
 fn embedding_to_bytes(vec: &[f32]) -> Vec<u8> {
   let mut bytes = Vec::with_capacity(vec.len() * 4);
   for &f in vec {
-    bytes.extend_from_slice(&f.to_ne_bytes());
+    bytes.extend_from_slice(&f.to_le_bytes());
   }
   bytes
 }
@@ -43,7 +43,9 @@ impl SqliteStorage {
   pub fn open(path: impl AsRef<Path>) -> Result<Self> {
     ensure_vec_extension();
     let conn = Connection::open(path).map_err(map_rusqlite)?;
-    conn.execute_batch("PRAGMA busy_timeout = 5000;").map_err(map_rusqlite)?;
+    conn
+      .execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
+      .map_err(map_rusqlite)?;
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
     })
@@ -52,7 +54,7 @@ impl SqliteStorage {
   pub fn open_in_memory() -> Result<Self> {
     ensure_vec_extension();
     let conn = Connection::open_in_memory().map_err(map_rusqlite)?;
-    conn.execute_batch("PRAGMA busy_timeout = 5000;").map_err(map_rusqlite)?;
+    conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;").map_err(map_rusqlite)?;
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
     })
