@@ -24,6 +24,16 @@ impl FastEmbedReranker {
     })
   }
 
+  pub fn from_model_hub_sync(hub: &ModelHub, spec: &ModelSpec) -> Result<Self> {
+    let model = reranker_model_for(&spec.repo_id)?;
+    let options = RerankInitOptions::new(model).with_cache_dir(hub.cache_dir().to_path_buf());
+    let inner = TextRerank::try_new(options).map_err(|e| ModelError::Other(e.to_string()))?;
+    Ok(Self {
+      inner: Mutex::new(inner),
+      model_name: spec.repo_id.clone(),
+    })
+  }
+
   pub fn model_name(&self) -> &str {
     &self.model_name
   }

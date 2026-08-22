@@ -77,6 +77,11 @@
 - 现状：`search` 加载 ~1.1GB，`ask` 加载 ~6GB，每次冷启动。最大 UX 瓶颈。
 - 修复：daemon/server 模式或模型常驻进程（MCP server 是对接点）。
 
+### P1-22. ~~模型加载串行 — reranker 和 LLM 可并行加载~~ ✅ 已完成
+
+- 文件：`crates/docq/src/engine.rs`、`crates/docq-model/src/{hub,rerank,gguf}.rs`
+- 改动：`build_ask_components` 改为两阶段 — Phase 1 串行加载 embedding + `storage.init(dimension)`，Phase 2 用 `spawn_blocking` + `tokio::join!` 并行加载 reranker (~1.1GB) 和 LLM (~6GB)。给 `ModelHub` 加 `Clone` + `resolve_sync`/`ensure_sync`，给 `FastEmbedReranker`/`GgufLlm` 加 `from_model_hub_sync`，删除不再使用的 async `load_llm`。
+
 ## 三、设计 / API 改进
 
 ### P2-13. 所有错误类型都是 `Other(String)` — 无法结构化匹配

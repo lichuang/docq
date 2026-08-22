@@ -36,6 +36,24 @@ impl GgufLlm {
       config: config.clone(),
     })
   }
+
+  pub fn from_model_hub_sync(hub: &ModelHub, spec: &ModelSpec, config: &LlmConfig) -> Result<Self> {
+    let path = hub.resolve_sync(spec)?;
+
+    let mut backend = LlamaBackend::init().map_err(|e| LlmError::Other(format!("init backend: {e}")))?;
+    backend.void_logs();
+    let model_params = LlamaModelParams::default();
+    let model = LlamaModel::load_from_file(&backend, &path, &model_params)
+      .map_err(|e| LlmError::Other(format!("load model: {e}")))?;
+    let chat_template = model.chat_template(None).map_err(|e| LlmError::Other(format!("get chat template: {e}")))?;
+
+    Ok(Self {
+      backend,
+      model,
+      chat_template,
+      config: config.clone(),
+    })
+  }
 }
 
 #[async_trait::async_trait]

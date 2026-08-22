@@ -161,9 +161,27 @@ impl Engine {
     Ok(Arc::new(FastEmbedReranker::from_model_hub(hub, spec).await?))
   }
 
-  async fn load_llm(hub: &ModelHub, storage: &dyn Storage, spec: &ModelSpec, llm: &LlmConfig) -> Result<Arc<dyn Llm>> {
-    hub.ensure(spec, storage).await?;
-    Ok(Arc::new(GgufLlm::from_model_hub(hub, spec, llm).await?))
+  fn load_reranker_sync(
+    hub: ModelHub,
+    storage: Arc<dyn Storage>,
+    spec: ModelSpec,
+    verbose: Verbose,
+  ) -> Result<Arc<dyn Reranker>> {
+    let _step = verbose.start("load reranker model");
+    hub.ensure_sync(&spec, storage.as_ref())?;
+    Ok(Arc::new(FastEmbedReranker::from_model_hub_sync(&hub, &spec)?))
+  }
+
+  fn load_llm_sync(
+    hub: ModelHub,
+    storage: Arc<dyn Storage>,
+    spec: ModelSpec,
+    llm_config: LlmConfig,
+    verbose: Verbose,
+  ) -> Result<Arc<dyn Llm>> {
+    let _step = verbose.start("load LLM");
+    hub.ensure_sync(&spec, storage.as_ref())?;
+    Ok(Arc::new(GgufLlm::from_model_hub_sync(&hub, &spec, &llm_config)?))
   }
 
   // ---- On-demand open methods ----
@@ -223,13 +241,34 @@ impl Engine {
   }
 
   async fn build_ask_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
-    let (mut components, hub) = Self::build_search_components(engine_config).await?;
+    let (mut components, hub) = Self::build_index_components(engine_config).await?;
+
+    let rerank_spec = engine_config.config.models.reranker.to_spec("reranker");
     let llm_spec = engine_config.config.models.llm.to_spec("chat");
     let llm_config: LlmConfig = engine_config.config.llm.clone().try_into()?;
-    components.llm = Some({
-      let _step = engine_config.verbose.start("load LLM");
-      Self::load_llm(&hub, components.storage.as_ref(), &llm_spec, &llm_config).await?
-    });
+    let storage = components.storage.clone();
+    let verbose = engine_config.verbose;
+
+    // Reranker and LLM are independent; load them in parallel
+    // on blocking threads so their downloads overlap.
+    let rerank_hub = hub.clone();
+    let llm_hub = hub.clone();
+    let rerank_storage = storage.clone();
+    let llm_storage = storage.clone();
+    let rerank_verbose = verbose;
+    let llm_verbose = verbose;
+
+    let (reranker, llm) = tokio::join!(
+      tokio::task::spawn_blocking(move || {
+        Self::load_reranker_sync(rerank_hub, rerank_storage, rerank_spec, rerank_verbose)
+      }),
+      tokio::task::spawn_blocking(move || {
+        Self::load_llm_sync(llm_hub, llm_storage, llm_spec, llm_config, llm_verbose)
+      }),
+    );
+
+    components.reranker = Some(reranker.map_err(|e| docq_core::ModelError::Other(format!("reranker task: {e}")))??);
+    components.llm = Some(llm.map_err(|e| docq_core::ModelError::Other(format!("llm task: {e}")))??);
 
     Ok((components, hub))
   }
