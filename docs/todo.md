@@ -16,11 +16,10 @@
 - 现状：`add` 命令始终用 `BGE_SMALL_ZH_V1_5_DIMENSION`(512) 调 `init`。如果用户配置了 dim=1024 的模型（如 BGE-M3），`add` 先建了 `FLOAT[512]` 表，之后 `index` 调 `init(1024)` → dimension mismatch → 报错，无法索引。
 - 修复：`add` 不需要向量表，应传 0（配合 P0-1）或完全不调 `init`。
 
-### P0-3. 跨文件相同文本的 chunk dedup 丢失 doc_id 关联
+### P0-3. ~~跨文件相同文本的 chunk dedup 丢失 doc_id 关联~~ ✅ 已完成
 
-- 文件：`crates/docq-storage/src/sqlite.rs:123-138` (`insert_chunks`)
-- 现状：`INSERT OR REPLACE`，`chunk_id` 是文本 SHA-256。文件 A 和 B 包含相同段落时，B 覆盖 A 的 `doc_id`，搜索命中该 chunk 时引用指向 B 而非 A。
-- 修复：拆出 `chunk_documents(chunk_id, doc_id)` 多对多关联表，或放弃跨文件 dedup。
+- 文件：`crates/docq-storage/src/sqlite.rs`、`crates/docq-core/src/traits.rs`、`crates/docq-indexer/src/lib.rs`
+- 改动：新增 `chunk_documents(chunk_id, doc_id)` 多对多关联表，从 `chunks` 表移除 `doc_id` 列。`insert_chunks` 改为 `INSERT OR IGNORE`（共享文本只存一次）。新增 `StorageTx::add_chunk_documents` 方法。`delete_chunks_by_doc` 改为从 `chunk_documents` 删除关联，仅当 chunk 无任何文档引用时才清理 `chunks`/`vec_chunks`/`fts_chunks`。`get_chunks` 通过子查询从 `chunk_documents` 填充 `doc_id`。新增测试 `test_shared_chunk_survives_deleting_one_doc` 验证共享 chunk 在删除一个文档后仍存在。`cargo test -p docq-storage` 10/10 通过。
 
 ### P1-4. SQLite 外键未启用 — `ON DELETE CASCADE` 形同虚设
 

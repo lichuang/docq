@@ -122,17 +122,24 @@ fn insert_document(conn: &Connection, doc: &Document) -> rusqlite::Result<()> {
 
 fn insert_chunks(conn: &Connection, chunks: &[Chunk]) -> rusqlite::Result<()> {
   let mut stmt = conn.prepare(
-    "INSERT OR REPLACE INTO chunks (chunk_id, doc_id, text, start_byte, end_byte)
-     VALUES (?1, ?2, ?3, ?4, ?5)",
+    "INSERT OR IGNORE INTO chunks (chunk_id, text, start_byte, end_byte)
+     VALUES (?1, ?2, ?3, ?4)",
   )?;
   for chunk in chunks {
     stmt.execute(params![
       chunk.id,
-      chunk.doc_id,
       chunk.text,
       chunk.byte_range.start as i64,
       chunk.byte_range.end as i64,
     ])?;
+  }
+  Ok(())
+}
+
+fn insert_chunk_documents(conn: &Connection, chunk_ids: &[String], doc_id: &str) -> rusqlite::Result<()> {
+  let mut stmt = conn.prepare("INSERT OR IGNORE INTO chunk_documents (chunk_id, doc_id) VALUES (?1, ?2)")?;
+  for cid in chunk_ids {
+    stmt.execute(params![cid, doc_id])?;
   }
   Ok(())
 }
@@ -169,15 +176,18 @@ fn delete_document(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
 }
 
 fn delete_chunks_by_doc(conn: &Connection, doc_id: &str) -> rusqlite::Result<()> {
+  conn.execute("DELETE FROM chunk_documents WHERE doc_id = ?1", params![doc_id])?;
+
+  let orphaned = "chunk_id NOT IN (SELECT chunk_id FROM chunk_documents)";
   conn.execute(
-    "DELETE FROM vec_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?1)",
-    params![doc_id],
+    &format!("DELETE FROM vec_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE {orphaned})"),
+    [],
   )?;
   conn.execute(
-    "DELETE FROM fts_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE doc_id = ?1)",
-    params![doc_id],
+    &format!("DELETE FROM fts_chunks WHERE chunk_id IN (SELECT chunk_id FROM chunks WHERE {orphaned})"),
+    [],
   )?;
-  conn.execute("DELETE FROM chunks WHERE doc_id = ?1", params![doc_id])?;
+  conn.execute(&format!("DELETE FROM chunks WHERE {orphaned}"), [])?;
   Ok(())
 }
 
@@ -220,17 +230,29 @@ impl Storage for SqliteStorage {
          FOREIGN KEY (doc_id) REFERENCES documents(doc_id) ON DELETE CASCADE
        );
        CREATE TABLE IF NOT EXISTS chunks (
-         -- Text block produced by the Chunker; `text` is the exact string embedded.
-         -- chunk_id is the SHA-256 of `text`, so identical content is stored once.
-         -- Parallel `vec_chunks` (sqlite-vec) and `fts_chunks` (FTS5) tables
-         -- are keyed by the same chunk_id.
-         chunk_id   TEXT PRIMARY KEY,  -- SHA-256 of `text`; content-addressed dedup
-         doc_id     TEXT NOT NULL,     -- FK -> documents.doc_id
-         text       TEXT NOT NULL,     -- full original text actually embedded
-         start_byte INTEGER NOT NULL,  -- byte offset in the source file (inclusive)
-         end_byte   INTEGER NOT NULL,   -- byte offset in the source file (exclusive)
-         FOREIGN KEY (doc_id) REFERENCES documents(doc_id)
-       );
+          -- Text block produced by the Chunker; `text` is the exact string embedded.
+          -- chunk_id is the SHA-256 of `text`, so identical content is stored once.
+          -- Parallel `vec_chunks` (sqlite-vec) and `fts_chunks` (FTS5) tables
+          -- are keyed by the same chunk_id.
+          -- doc_id is NOT stored here — the many-to-many mapping lives in
+          -- `chunk_documents` so a shared chunk can belong to multiple files
+          -- without one overwriting the other.
+          chunk_id   TEXT PRIMARY KEY,  -- SHA-256 of `text`; content-addressed dedup
+          text       TEXT NOT NULL,     -- full original text actually embedded
+          start_byte INTEGER NOT NULL,  -- byte offset in the source file (inclusive)
+          end_byte   INTEGER NOT NULL  -- byte offset in the source file (exclusive)
+        );
+        CREATE TABLE IF NOT EXISTS chunk_documents (
+          -- Many-to-many junction: a chunk (identified by its text hash) can
+          -- appear in multiple documents. This table records every (chunk, doc)
+          -- pair so that deleting one document does not clobber the doc_id of
+          -- a chunk still referenced by another document.
+          chunk_id  TEXT NOT NULL,
+          doc_id    TEXT NOT NULL,
+          PRIMARY KEY (chunk_id, doc_id),
+          FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE,
+          FOREIGN KEY (doc_id) REFERENCES documents(doc_id) ON DELETE CASCADE
+        );
        CREATE TABLE IF NOT EXISTS model_versions (
          -- Records which model produced the current embeddings / rerank scores / chat answers.
          -- On embedding-model upgrade the stored vectors become stale; the indexer compares
@@ -352,7 +374,13 @@ impl Storage for SqliteStorage {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     let placeholders = (0..chunk_ids.len()).map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!(
-      "SELECT chunk_id, doc_id, text, start_byte, end_byte FROM chunks WHERE chunk_id IN ({})",
+      "SELECT c.chunk_id, (
+         SELECT cd.doc_id FROM chunk_documents cd
+         WHERE cd.chunk_id = c.chunk_id
+         ORDER BY cd.doc_id LIMIT 1
+       ) AS doc_id, c.text, c.start_byte, c.end_byte
+       FROM chunks c
+       WHERE c.chunk_id IN ({})",
       placeholders
     );
     let mut stmt = conn.prepare(&sql).map_err(map_rusqlite)?;
@@ -360,7 +388,7 @@ impl Storage for SqliteStorage {
       .query_map(params_from_iter(chunk_ids.iter()), |r| {
         Ok((
           r.get::<_, String>(0)?,
-          r.get::<_, String>(1)?,
+          r.get::<_, Option<String>>(1)?,
           r.get::<_, String>(2)?,
           r.get::<_, i64>(3)?,
           r.get::<_, i64>(4)?,
@@ -374,7 +402,7 @@ impl Storage for SqliteStorage {
       .into_iter()
       .map(|(id, doc_id, text, start, end)| Chunk {
         id,
-        doc_id,
+        doc_id: doc_id.unwrap_or_default(),
         text,
         byte_range: start as usize..end as usize,
       })
@@ -513,6 +541,12 @@ impl StorageTx for SqliteTransaction {
   fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     insert_chunks(&conn, chunks).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn add_chunk_documents(&mut self, chunk_ids: &[String], doc_id: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    insert_chunk_documents(&conn, chunk_ids, doc_id).map_err(map_rusqlite)?;
     Ok(())
   }
 
@@ -659,6 +693,7 @@ mod tests {
     commit(&storage, |tx| {
       tx.add_document(&doc).unwrap();
       tx.add_chunks(&[c1, c2]).unwrap();
+      tx.add_chunk_documents(&["c1".to_string(), "c2".to_string()], "doc1.txt").unwrap();
     });
 
     let got = storage.get_chunks(&["c1".to_string(), "c2".to_string()]).unwrap();
@@ -669,6 +704,38 @@ mod tests {
     });
     let gone = storage.get_chunks(&["c1".to_string()]).unwrap();
     assert!(gone.is_empty());
+  }
+
+  #[test]
+  fn test_shared_chunk_survives_deleting_one_doc() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.init(512).unwrap();
+
+    let doc_a = make_doc("doc_a.txt", "shared text");
+    let doc_b = make_doc("doc_b.txt", "shared text");
+    let shared_chunk = make_chunk("shared", "doc_a.txt", "shared text", 0, 11);
+
+    commit(&storage, |tx| {
+      tx.add_document(&doc_a).unwrap();
+      tx.add_chunks(&[shared_chunk]).unwrap();
+      tx.add_chunk_documents(&["shared".to_string()], "doc_a.txt").unwrap();
+    });
+    commit(&storage, |tx| {
+      tx.add_document(&doc_b).unwrap();
+      tx.add_chunks(&[make_chunk("shared", "doc_b.txt", "shared text", 0, 11)]).unwrap();
+      tx.add_chunk_documents(&["shared".to_string()], "doc_b.txt").unwrap();
+    });
+
+    let got = storage.get_chunks(&["shared".to_string()]).unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(!got[0].text.is_empty());
+
+    commit(&storage, |tx| {
+      tx.delete_chunks_by_doc("doc_a.txt").unwrap();
+    });
+
+    let got = storage.get_chunks(&["shared".to_string()]).unwrap();
+    assert_eq!(got.len(), 1, "shared chunk must survive when doc_b still references it");
   }
 
   #[test]
@@ -684,6 +751,7 @@ mod tests {
     commit(&storage, |tx| {
       tx.add_document(&doc).unwrap();
       tx.add_chunks(&[chunk]).unwrap();
+      tx.add_chunk_documents(&["c1".to_string()], "doc1.txt").unwrap();
       tx.add_vectors(&["c1".to_string()], &[embedding]).unwrap();
       tx.add_fts_chunks(&["c1".to_string()], &[tokenized]).unwrap();
     });
@@ -746,6 +814,7 @@ mod tests {
     commit(&storage, |tx| {
       tx.add_document(&doc).unwrap();
       tx.add_chunks(&chunks).unwrap();
+      tx.add_chunk_documents(&ids, "doc1.txt").unwrap();
       tx.add_vectors(&ids, &vectors).unwrap();
     });
 
@@ -775,6 +844,7 @@ mod tests {
     commit(&storage, |tx| {
       tx.add_document(&doc).unwrap();
       tx.add_chunks(&chunk_objs).unwrap();
+      tx.add_chunk_documents(&ids, "doc1.txt").unwrap();
       tx.add_fts_chunks(&ids, &texts).unwrap();
     });
 
@@ -800,6 +870,7 @@ mod tests {
       let mut tx = storage.begin_tx().unwrap();
       tx.add_document(&doc).unwrap();
       tx.add_chunks(&[chunk.clone()]).unwrap();
+      tx.add_chunk_documents(&["c1".to_string()], "doc1.txt").unwrap();
       tx.add_vectors(&["c1".to_string()], &[embedding.clone()]).unwrap();
       tx.add_fts_chunks(&["c1".to_string()], &[tokenized.clone()]).unwrap();
       tx.commit().unwrap();

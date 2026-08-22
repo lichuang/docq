@@ -211,6 +211,7 @@ impl Indexer {
       tx.add_document(&pf.doc)?;
       tx.set_document_path(&pf.doc.id, &pf.path.to_string_lossy())?;
       tx.add_chunks(&pf.chunks)?;
+      tx.add_chunk_documents(&chunk_ids, &pf.doc.id)?;
       tx.add_vectors(&chunk_ids, &embeddings)?;
       tx.add_fts_chunks(&chunk_ids, &pf.tokenized_texts)?;
       tx.commit()?;

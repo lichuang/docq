@@ -87,6 +87,7 @@ pub trait StorageTx {
   fn set_document_path(&mut self, doc_id: &str, path: &str) -> Result<()>;
   fn delete_document(&mut self, doc_id: &str) -> Result<()>;
   fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()>;
+  fn add_chunk_documents(&mut self, chunk_ids: &[String], doc_id: &str) -> Result<()>;
   fn delete_chunks_by_doc(&mut self, doc_id: &str) -> Result<()>;
   fn add_vectors(&mut self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()>;
   fn add_fts_chunks(&mut self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()>;
