@@ -27,11 +27,10 @@
 - 现状：从未执行 `PRAGMA foreign_keys = ON`。`delete_document` 手动先删 `document_paths` 再删 `documents` 绕过，但直接删 `documents` 行不会级联清理。
 - 修复：open 时执行 `PRAGMA foreign_keys = ON`。
 
-### P1-5. 无增量删除 — 已删除文件不会从索引中移除
+### P1-5. ~~无增量删除 — 已删除文件不会从索引中移除~~ ✅ 已完成
 
-- 文件：`crates/docq-indexer/src/lib.rs` (`Indexer::index_directory`)
-- 现状：只处理目录中存在的文件，磁盘删除的文件不会清理 documents/chunks/vectors/fts。
-- 修复：增加 tombstone sweep — 对比 `list_documents()` 与实际文件，删除消失的文档。
+- 文件：`crates/docq-indexer/src/lib.rs`、`crates/docq/src/main.rs`
+- 改动：`index_directory` 新增 tombstone sweep — 在索引前先 `list_documents()` + `get_document_paths()`，对比磁盘实际文件，删除不再存在的文档（通过 `delete_document` + `delete_chunks_by_doc`）。`IndexStats` 新增 `files_removed` 字段，CLI 输出显示 removed 计数。新增测试 `test_index_directory_removes_deleted_files`。
 
 ### P1-6. `embedding_to_bytes` 用 native endian — 跨架构 DB 不可移植
 

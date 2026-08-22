@@ -291,120 +291,166 @@ async fn run_command(
   config: DocqConfig,
   verbose: Verbose,
 ) -> anyhow::Result<()> {
-  // Make sure the workspace (data) directory exists for commands that need storage.
   fs::create_dir_all(workspace)?;
 
   match cmd {
-    Commands::Init => {
-      fs::create_dir_all(workspace)?;
-      let storage = SqliteStorage::open_workspace(workspace)?;
-      storage.init(BGE_SMALL_ZH_V1_5_DIMENSION)?;
-      println!("Initialized workspace at {}", workspace.display());
-    }
-
-    Commands::Add { path, name } => {
-      // add only needs storage, not models — avoid Engine::open to skip model downloads
-      let storage = open_storage(workspace)?;
-      let canonical = fs::canonicalize(path)?;
-      let path_str = canonical.to_string_lossy().to_string();
-      let mut tx = storage.begin_tx()?;
-      tx.add_collection(name, &path_str)?;
-      tx.commit()?;
-      println!("Added collection '{}' -> {}", name, canonical.display());
-    }
-
-    Commands::Status { json } => {
-      // status only reads metadata, not models
-      let storage = open_storage(workspace)?;
-      let docs = storage.list_documents()?;
-      let collections = storage.list_collections()?;
-      let chunks = storage.count_chunks()?;
-      let status = EngineStatus {
-        documents: docs.len(),
-        chunks,
-        collections,
-      };
-      if *json {
-        print_json(&status);
-      } else {
-        println!("Workspace: {}", workspace.display());
-        println!("Documents: {}", status.documents);
-        println!("Chunks: {}", status.chunks);
-        println!("Collections: {}", status.collections.len());
-        for c in &status.collections {
-          println!("  {} -> {}", c.name, c.path.display());
-        }
-      }
-    }
-
+    Commands::Init => run_init(workspace),
+    Commands::Add { path, name } => run_add(workspace, path, name),
+    Commands::Status { json } => run_status(workspace, *json),
     Commands::Index { collection } => {
-      let engine = Engine::open_for_index(engine_config(workspace, model_cache, config.clone(), verbose)).await?;
-      let stats = if let Some(name) = collection {
-        engine.index_one(name).await?
-      } else {
-        engine.index().await?
-      };
-      println!(
-        "Indexed {} files ({} chunks, {} skipped)",
-        stats.files_indexed, stats.chunks_indexed, stats.files_skipped
-      );
+      run_index(workspace, model_cache, config.clone(), verbose, collection.as_deref()).await
     }
-
     Commands::Search {
       query,
       top_k,
       explain,
       json,
     } => {
-      let engine = Engine::open_for_search(engine_config(workspace, model_cache, config.clone(), verbose)).await?;
-      let hits = engine.search(query, *top_k).await?;
+      run_search(
+        workspace,
+        model_cache,
+        config.clone(),
+        verbose,
+        query,
+        *top_k,
+        *explain,
+        *json,
+      )
+      .await
+    }
+    Commands::Ask { query, json } => run_ask(workspace, model_cache, config.clone(), verbose, query, *json).await,
+  }
+}
 
-      if *json {
-        let output: Vec<serde_json::Value> = hits
-          .iter()
-          .map(|h| {
-            if *explain {
-              serde_json::to_value(h).unwrap_or_default()
-            } else {
-              serde_json::json!({
-                "chunk": h.chunk,
-                "score": h.score,
-              })
-            }
+fn run_init(workspace: &Path) -> anyhow::Result<()> {
+  fs::create_dir_all(workspace)?;
+  let storage = SqliteStorage::open_workspace(workspace)?;
+  storage.init(BGE_SMALL_ZH_V1_5_DIMENSION)?;
+  println!("Initialized workspace at {}", workspace.display());
+  Ok(())
+}
+
+fn run_add(workspace: &Path, path: &Path, name: &str) -> anyhow::Result<()> {
+  let storage = open_storage(workspace)?;
+  let canonical = fs::canonicalize(path)?;
+  let path_str = canonical.to_string_lossy().to_string();
+  let mut tx = storage.begin_tx()?;
+  tx.add_collection(name, &path_str)?;
+  tx.commit()?;
+  println!("Added collection '{}' -> {}", name, canonical.display());
+  Ok(())
+}
+
+fn run_status(workspace: &Path, json: bool) -> anyhow::Result<()> {
+  let storage = open_storage(workspace)?;
+  let docs = storage.list_documents()?;
+  let collections = storage.list_collections()?;
+  let chunks = storage.count_chunks()?;
+  let status = EngineStatus {
+    documents: docs.len(),
+    chunks,
+    collections,
+  };
+  if json {
+    print_json(&status);
+  } else {
+    println!("Workspace: {}", workspace.display());
+    println!("Documents: {}", status.documents);
+    println!("Chunks: {}", status.chunks);
+    println!("Collections: {}", status.collections.len());
+    for c in &status.collections {
+      println!("  {} -> {}", c.name, c.path.display());
+    }
+  }
+  Ok(())
+}
+
+async fn run_index(
+  workspace: &Path,
+  model_cache: &Path,
+  config: DocqConfig,
+  verbose: Verbose,
+  collection: Option<&str>,
+) -> anyhow::Result<()> {
+  let engine = Engine::open_for_index(engine_config(workspace, model_cache, config, verbose)).await?;
+  let stats = if let Some(name) = collection {
+    engine.index_one(name).await?
+  } else {
+    engine.index().await?
+  };
+  println!(
+    "Indexed {} files ({} chunks, {} skipped, {} removed)",
+    stats.files_indexed, stats.chunks_indexed, stats.files_skipped, stats.files_removed
+  );
+  Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_search(
+  workspace: &Path,
+  model_cache: &Path,
+  config: DocqConfig,
+  verbose: Verbose,
+  query: &str,
+  top_k: usize,
+  explain: bool,
+  json: bool,
+) -> anyhow::Result<()> {
+  let engine = Engine::open_for_search(engine_config(workspace, model_cache, config, verbose)).await?;
+  let hits = engine.search(query, top_k).await?;
+
+  if json {
+    let output: Vec<serde_json::Value> = hits
+      .iter()
+      .map(|h| {
+        if explain {
+          serde_json::to_value(h).unwrap_or_default()
+        } else {
+          serde_json::json!({
+            "chunk": h.chunk,
+            "score": h.score,
           })
-          .collect();
-        print_json(&serde_json::json!({ "hits": output }));
-      } else {
-        for (i, hit) in hits.iter().enumerate() {
-          println!("[{}] {:.4} {}", i + 1, hit.score, hit.chunk.text.trim());
-          if *explain {
-            let e = &hit.explain;
-            println!(
-              "    bm25={:?} vec={:?} rrf={:?} rerank={:?}",
-              e.bm25_score, e.vector_score, e.rrf_score, e.rerank_score
-            );
-          }
         }
-        if hits.is_empty() {
-          println!("No results found.");
-        }
+      })
+      .collect();
+    print_json(&serde_json::json!({ "hits": output }));
+  } else {
+    for (i, hit) in hits.iter().enumerate() {
+      println!("[{}] {:.4} {}", i + 1, hit.score, hit.chunk.text.trim());
+      if explain {
+        let e = &hit.explain;
+        println!(
+          "    bm25={:?} vec={:?} rrf={:?} rerank={:?}",
+          e.bm25_score, e.vector_score, e.rrf_score, e.rerank_score
+        );
       }
     }
+    if hits.is_empty() {
+      println!("No results found.");
+    }
+  }
+  Ok(())
+}
 
-    Commands::Ask { query, json } => {
-      let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config.clone(), verbose)).await?;
-      let answer = engine.ask(query).await?;
+async fn run_ask(
+  workspace: &Path,
+  model_cache: &Path,
+  config: DocqConfig,
+  verbose: Verbose,
+  query: &str,
+  json: bool,
+) -> anyhow::Result<()> {
+  let engine = Engine::open_for_ask(engine_config(workspace, model_cache, config, verbose)).await?;
+  let answer = engine.ask(query).await?;
 
-      if *json {
-        print_json(&answer);
-      } else {
-        println!("{}", answer.text);
-        if !answer.citations.is_empty() {
-          println!("\nSources:");
-          for c in &answer.citations {
-            println!("  {} {}", c.marker, c.source);
-          }
-        }
+  if json {
+    print_json(&answer);
+  } else {
+    println!("{}", answer.text);
+    if !answer.citations.is_empty() {
+      println!("\nSources:");
+      for c in &answer.citations {
+        println!("  {} {}", c.marker, c.source);
       }
     }
   }
