@@ -504,6 +504,12 @@ impl Storage for SqliteStorage {
     Ok(count as usize)
   }
 
+  fn set_model_version_atomic(&self, role: ModelRole, version: &ModelSpec) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    set_model_version(&conn, role, version).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
   fn begin_tx(&self) -> Result<Box<dyn StorageTx + '_>> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     conn.execute_batch("BEGIN").map_err(map_rusqlite)?;
