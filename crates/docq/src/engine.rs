@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use docq_core::{
-  Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelSpec, Reranker, Result, SearchHit, Storage,
-  Verbose, WordSegmenter,
+  Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelRole, ModelSpec, Reranker, Result, SearchHit,
+  Storage, Verbose, WordSegmenter,
 };
 #[cfg(feature = "docx")]
 use docq_indexer::DocxReader;
@@ -128,7 +128,7 @@ impl Engine {
     indexing: &crate::config::IndexingConfig,
   ) -> Result<Arc<dyn Chunker>> {
     let tokenizer_spec = ModelSpec {
-      role: "tokenizer".into(),
+      role: ModelRole::Tokenizer,
       repo_id: emb_spec.repo_id.clone(),
       filename: BGE_SMALL_ZH_V1_5_TOKENIZER_FILE.into(),
       revision: emb_spec.revision.clone(),
@@ -207,7 +207,7 @@ impl Engine {
   async fn build_index_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
     let hub = ModelHub::new(engine_config.model_cache_dir.clone());
     let storage = Self::open_storage(&engine_config.workspace_path)?;
-    let emb_spec = engine_config.config.models.embedding.to_spec("embedding");
+    let emb_spec = engine_config.config.models.embedding.to_spec(ModelRole::Embedding);
     let (embedder, chunker) = {
       let _step = engine_config.verbose.start("load embedding model");
       Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &engine_config.config.indexing).await?
@@ -231,7 +231,7 @@ impl Engine {
 
   async fn build_search_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
     let (mut components, hub) = Self::build_index_components(engine_config).await?;
-    let rerank_spec = engine_config.config.models.reranker.to_spec("reranker");
+    let rerank_spec = engine_config.config.models.reranker.to_spec(ModelRole::Reranker);
     components.reranker = Some({
       let _step = engine_config.verbose.start("load reranker model");
       Self::load_reranker(&hub, components.storage.as_ref(), &rerank_spec).await?
@@ -243,8 +243,8 @@ impl Engine {
   async fn build_ask_components(engine_config: &EngineConfig) -> Result<(EngineComponents, ModelHub)> {
     let (mut components, hub) = Self::build_index_components(engine_config).await?;
 
-    let rerank_spec = engine_config.config.models.reranker.to_spec("reranker");
-    let llm_spec = engine_config.config.models.llm.to_spec("chat");
+    let rerank_spec = engine_config.config.models.reranker.to_spec(ModelRole::Reranker);
+    let llm_spec = engine_config.config.models.llm.to_spec(ModelRole::Chat);
     let llm_config: LlmConfig = engine_config.config.llm.clone().try_into()?;
     let storage = components.storage.clone();
     let verbose = engine_config.verbose;

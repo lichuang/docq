@@ -1,4 +1,4 @@
-use docq_core::ModelSpec;
+use docq_core::{ModelRole, ModelSpec};
 
 // ---- Default embedding model: Xenova/bge-small-zh-v1.5 ----
 
@@ -44,7 +44,7 @@ pub struct ModelRegistry;
 impl ModelRegistry {
   pub fn default_embedding() -> ModelSpec {
     ModelSpec {
-      role: "embedding".into(),
+      role: ModelRole::Embedding,
       repo_id: BGE_SMALL_ZH_V1_5_REPO.into(),
       filename: BGE_SMALL_ZH_V1_5_FILE.into(),
       revision: "main".into(),
@@ -54,7 +54,7 @@ impl ModelRegistry {
 
   pub fn default_reranker() -> ModelSpec {
     ModelSpec {
-      role: "reranker".into(),
+      role: ModelRole::Reranker,
       repo_id: BGE_RERANKER_BASE_REPO.into(),
       filename: BGE_RERANKER_BASE_FILE.into(),
       revision: "main".into(),
@@ -64,7 +64,7 @@ impl ModelRegistry {
 
   pub fn default_llm() -> ModelSpec {
     ModelSpec {
-      role: "chat".into(),
+      role: ModelRole::Chat,
       repo_id: QWEN2_5_3B_INSTRUCT_GGUF_REPO.into(),
       filename: QWEN2_5_3B_INSTRUCT_Q4_K_M_FILE.into(),
       revision: "main".into(),

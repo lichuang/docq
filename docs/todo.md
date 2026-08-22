@@ -87,11 +87,10 @@
 - 文件：`crates/docq-core/src/error.rs` + 全 crate 60 个创建点
 - 改动：将 7 个 error enum 从单一 `Other(String)` 改为结构化变体。`StoreError` → `Sqlite`/`MutexPoisoned`/`InvalidDimension`/`SchemaMismatch`/`TransactionAlreadyCommitted`/`ArgumentMismatch`/`Io`/`NotFound`/`InvalidTimestamp`；`EmbedError` → `EmptyResult`/`MutexPoisoned`/`InferenceFailed`；`RetrieveError` → `TaskJoin`/`MutexPoisoned`/`RerankFailed`；`LlmError` → `BackendInit`/`ModelLoad`/`InferenceFailed`/`NotLoaded`/`InvalidConfig`/`TokenizerLoad`；`ModelError` → `ModelInitFailed`/`ModelInfoFailed`/`UnsupportedModel`/`DownloadFailed`/`HubApiFailed`/`TaskJoin`；`ParseError` → `Io`/`ExtractFailed`/`ZipFailed`/`ZipEntryMissing`/`XmlParseFailed`。`SynthError` 保留 `Other`（无创建点）。`cargo check --workspace` + `clippy -D warnings` + `fmt --check` 全通过。
 
-### P2-14. `ModelSpec.role` 是 String — 应为 enum
+### P2-14. ~~`ModelSpec.role` 是 String — 应为 enum~~ ✅ 已完成
 
-- 文件：`crates/docq-core/src/models.rs:74-81`
-- 现状：`role: String`，取值 "embedding"/"reranker"/"chat"，容易拼写错误。
-- 修复：定义 `enum ModelRole { Embedding, Reranker, Chat }`。
+- 文件：`crates/docq-core/src/models.rs`、`crates/docq-core/src/traits.rs`、`crates/docq-storage/src/sqlite.rs`、`crates/docq-model/src/{hub,registry,lib}.rs`、`crates/docq/src/{config,engine}.rs`
+- 改动：新增 `ModelRole` enum（`Embedding`/`Reranker`/`Chat`/`Tokenizer`），实现 `as_str`/`Display`/`FromStr`/`Serialize`/`Deserialize`。`ModelSpec.role` 从 `String` 改为 `ModelRole`（`Copy`）。`Storage` trait 的 `get_model_version`/`set_model_version` 签名从 `&str` 改为 `ModelRole`。DB 存储仍用 `as_str()` 写入字符串列，读出时用 `role` 参数直接回填。`config.rs` 的 `to_spec` 参数从 `&str` 改为 `ModelRole`。全部 67 个测试通过。
 
 ### P3-15. `ask` 硬编码 top-5 检索
 

@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use docq_core::{LlmConfig, LlmError, ModelSpec};
+use docq_core::{LlmConfig, LlmError, ModelRole, ModelSpec};
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
@@ -21,9 +21,9 @@ pub struct ModelEntry {
 }
 
 impl ModelEntry {
-  pub fn to_spec(&self, role: &str) -> ModelSpec {
+  pub fn to_spec(&self, role: ModelRole) -> ModelSpec {
     ModelSpec {
-      role: role.into(),
+      role,
       repo_id: self.repo_id.clone(),
       filename: self.filename.clone(),
       revision: self.revision.clone(),

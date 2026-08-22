@@ -70,10 +70,47 @@ pub struct Citation {
   pub source: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModelRole {
+  Embedding,
+  Reranker,
+  Chat,
+  Tokenizer,
+}
+
+impl ModelRole {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::Embedding => "embedding",
+      Self::Reranker => "reranker",
+      Self::Chat => "chat",
+      Self::Tokenizer => "tokenizer",
+    }
+  }
+}
+
+impl std::fmt::Display for ModelRole {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(self.as_str())
+  }
+}
+
+impl std::str::FromStr for ModelRole {
+  type Err = String;
+  fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    match s {
+      "embedding" => Ok(Self::Embedding),
+      "reranker" => Ok(Self::Reranker),
+      "chat" => Ok(Self::Chat),
+      "tokenizer" => Ok(Self::Tokenizer),
+      other => Err(format!("unknown model role: {other}")),
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSpec {
-  /// `embedding` / `reranker` / `chat`.
-  pub role: String,
+  pub role: ModelRole,
   pub repo_id: String,
   pub filename: String,
   pub revision: String,

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Once};
 
 use chrono::{DateTime, Utc};
-use docq_core::{Chunk, Collection, Document, ModelSpec, Result, Storage, StorageTx, StoreError};
+use docq_core::{Chunk, Collection, Document, ModelRole, ModelSpec, Result, Storage, StorageTx, StoreError};
 use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use sqlite_vec::sqlite3_vec_init;
@@ -191,12 +191,12 @@ fn delete_chunks_by_doc(conn: &Connection, doc_id: &str) -> rusqlite::Result<()>
   Ok(())
 }
 
-fn set_model_version(conn: &Connection, role: &str, version: &ModelSpec) -> rusqlite::Result<()> {
+fn set_model_version(conn: &Connection, role: ModelRole, version: &ModelSpec) -> rusqlite::Result<()> {
   conn.execute(
     "INSERT OR REPLACE INTO model_versions (role, repo_id, filename, revision, checksum)
      VALUES (?1, ?2, ?3, ?4, ?5)",
     params![
-      role,
+      role.as_str(),
       version.repo_id,
       version.filename,
       version.revision,
@@ -452,12 +452,12 @@ impl Storage for SqliteStorage {
     Ok(rows)
   }
 
-  fn get_model_version(&self, role: &str) -> Result<Option<ModelSpec>> {
+  fn get_model_version(&self, role: ModelRole) -> Result<Option<ModelSpec>> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     let row = conn
       .query_row(
         "SELECT repo_id, filename, revision, checksum FROM model_versions WHERE role = ?1",
-        params![role],
+        params![role.as_str()],
         |r| {
           Ok((
             r.get::<_, String>(0)?,
@@ -472,7 +472,7 @@ impl Storage for SqliteStorage {
 
     match row {
       Some((repo_id, filename, revision, checksum)) => Ok(Some(ModelSpec {
-        role: role.to_string(),
+        role,
         repo_id,
         filename,
         revision,
@@ -588,7 +588,7 @@ impl StorageTx for SqliteTransaction {
     Ok(())
   }
 
-  fn set_model_version(&mut self, role: &str, version: &ModelSpec) -> Result<()> {
+  fn set_model_version(&mut self, role: ModelRole, version: &ModelSpec) -> Result<()> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     crate::sqlite::set_model_version(&conn, role, version).map_err(map_rusqlite)?;
     Ok(())
@@ -773,20 +773,20 @@ mod tests {
     let storage = SqliteStorage::open_in_memory().unwrap();
     storage.init(512).unwrap();
 
-    assert!(storage.get_model_version("embedding").unwrap().is_none());
+    assert!(storage.get_model_version(ModelRole::Embedding).unwrap().is_none());
 
     let spec = ModelSpec {
-      role: "embedding".into(),
+      role: ModelRole::Embedding,
       repo_id: "BAAI/bge-small-zh-v1.5".into(),
       filename: "model.onnx".into(),
       revision: "main".into(),
       checksum: Some("abc123".into()),
     };
     commit(&storage, |tx| {
-      tx.set_model_version("embedding", &spec).unwrap();
+      tx.set_model_version(ModelRole::Embedding, &spec).unwrap();
     });
 
-    let got = storage.get_model_version("embedding").unwrap().unwrap();
+    let got = storage.get_model_version(ModelRole::Embedding).unwrap().unwrap();
     assert_eq!(got.repo_id, "BAAI/bge-small-zh-v1.5");
     assert_eq!(got.checksum.as_deref(), Some("abc123"));
   }

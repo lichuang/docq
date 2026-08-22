@@ -21,7 +21,7 @@ impl ModelHub {
   pub async fn ensure(&self, spec: &ModelSpec, storage: &dyn Storage) -> Result<PathBuf> {
     let path = self.resolve(spec).await?;
     let mut tx = storage.begin_tx()?;
-    tx.set_model_version(&spec.role, spec)?;
+    tx.set_model_version(spec.role, spec)?;
     tx.commit()?;
     Ok(path)
   }
@@ -44,7 +44,7 @@ impl ModelHub {
   pub fn ensure_sync(&self, spec: &ModelSpec, storage: &dyn Storage) -> Result<PathBuf> {
     let path = self.resolve_sync(spec)?;
     let mut tx = storage.begin_tx()?;
-    tx.set_model_version(&spec.role, spec)?;
+    tx.set_model_version(spec.role, spec)?;
     tx.commit()?;
     Ok(path)
   }

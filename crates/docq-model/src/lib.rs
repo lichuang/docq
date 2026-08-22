@@ -21,7 +21,7 @@ pub use rerank::FastEmbedReranker;
 #[cfg(test)]
 mod tests {
   use super::*;
-  use docq_core::{Embedder, ModelSpec, Storage};
+  use docq_core::{Embedder, ModelRole, ModelSpec, Storage};
   use docq_storage::SqliteStorage;
   use std::fs;
   use tempfile::TempDir;
@@ -48,14 +48,14 @@ mod tests {
   #[tokio::test]
   async fn test_registry_defaults() {
     let emb = ModelRegistry::default_embedding();
-    assert_eq!(emb.role, "embedding");
+    assert_eq!(emb.role, ModelRole::Embedding);
     assert_eq!(emb.repo_id, BGE_SMALL_ZH_V1_5_REPO);
 
     let rnk = ModelRegistry::default_reranker();
-    assert_eq!(rnk.role, "reranker");
+    assert_eq!(rnk.role, ModelRole::Reranker);
 
     let llm = ModelRegistry::default_llm();
-    assert_eq!(llm.role, "chat");
+    assert_eq!(llm.role, ModelRole::Chat);
     assert!(llm.filename.ends_with(".gguf"));
   }
 
@@ -72,7 +72,7 @@ mod tests {
     assert!(path.exists());
     assert_eq!(fs::read_to_string(&path).unwrap(), "fake model bytes");
 
-    let recorded = storage.get_model_version("embedding").unwrap().unwrap();
+    let recorded = storage.get_model_version(ModelRole::Embedding).unwrap().unwrap();
     assert_eq!(recorded.repo_id, spec.repo_id);
   }
 
