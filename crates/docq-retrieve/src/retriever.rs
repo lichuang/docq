@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use docq_core::{
-  Chunk, EmbedError, Embedder, Reranker, Result, ScoreExplain, ScoredChunk, SearchHit, Storage, Verbose, WordSegmenter,
+  Chunk, EmbedError, Embedder, Reranker, Result, RetrieveError, ScoreExplain, ScoredChunk, SearchHit, Storage, Verbose,
+  WordSegmenter,
 };
 
 use crate::fusion;
@@ -64,16 +65,25 @@ impl Retriever {
 
   /// Lexical recall using BM25 over the FTS5 index.
   ///
-  /// Segments the query the same way as the indexed text, escapes FTS5
-  /// special characters, and queries the storage layer for BM25 scores.
-  fn bm25_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
-    let segmented_query = {
-      let _step = self.verbose.start("segment query");
-      self.segmenter.segment(query)
-    };
-    let safe_query = sanitize_fts5_query(&segmented_query);
-    let _step = self.verbose.start("BM25 recall");
-    self.storage.search_text(&safe_query, self.bm25_top_k)
+  /// Runs on a blocking thread so the caller can `tokio::join!` it with the
+  /// async vector recall and overlap the embedding call with the FTS5 query.
+  async fn bm25_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
+    let storage = self.storage.clone();
+    let segmenter = self.segmenter.clone();
+    let bm25_top_k = self.bm25_top_k;
+    let verbose = self.verbose;
+    let query = query.to_string();
+
+    let handle = tokio::task::spawn_blocking(move || {
+      let segmented_query = {
+        let _step = verbose.start("segment query");
+        segmenter.segment(&query)
+      };
+      let safe_query = sanitize_fts5_query(&segmented_query);
+      let _step = verbose.start("BM25 recall");
+      storage.search_text(&safe_query, bm25_top_k)
+    });
+    handle.await.map_err(|e| RetrieveError::Other(format!("bm25 task: {e}")))?
   }
 
   /// Semantic recall using dense vector KNN search.
@@ -227,11 +237,10 @@ impl Retriever {
 
     let _total = self.verbose.start("search");
 
-    // ---- Channel 1: BM25 lexical recall ----
-    let bm25_results = self.bm25_recall(query)?;
-
-    // ---- Channel 2: vector semantic recall ----
-    let vector_raw = self.vector_recall(query).await?;
+    // run `bm25_recall` and `vector_recall` concurrently
+    let (bm25_results, vector_raw) = tokio::join!(self.bm25_recall(query), self.vector_recall(query));
+    let bm25_results = bm25_results?;
+    let vector_raw = vector_raw?;
 
     // ---- RRF fusion ----
     // RRF uses only rank positions, not raw scores, so the directional
