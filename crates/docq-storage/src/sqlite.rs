@@ -81,9 +81,9 @@ impl SqliteStorage {
     if let Some(sql) = existing_sql {
       if !sql.contains(&expected_type) {
         return Err(
-          StoreError::Other(format!(
-            "vec_chunks dimension mismatch: existing table does not use {expected_type}"
-          ))
+          StoreError::SchemaMismatch {
+            expected: expected_type,
+          }
           .into(),
         );
       }
@@ -102,7 +102,7 @@ impl SqliteStorage {
 }
 
 fn poisoned() -> StoreError {
-  StoreError::Other("mutex poisoned".into())
+  StoreError::MutexPoisoned
 }
 
 fn insert_document(conn: &Connection, doc: &Document) -> rusqlite::Result<()> {
@@ -199,7 +199,7 @@ fn set_model_version(conn: &Connection, role: &str, version: &ModelSpec) -> rusq
 impl Storage for SqliteStorage {
   fn init(&self, vector_dimension: usize) -> Result<()> {
     if vector_dimension == 0 {
-      return Err(StoreError::Other("vector_dimension must be greater than 0".into()).into());
+      return Err(StoreError::InvalidDimension.into());
     }
 
     let conn = self.conn.lock().map_err(|_| poisoned())?;
@@ -281,8 +281,9 @@ impl Storage for SqliteStorage {
 
     match row {
       Some((id, content_hash, content_size, ts)) => {
-        let indexed_at =
-          DateTime::parse_from_rfc3339(&ts).map_err(|e| StoreError::Other(e.to_string()))?.with_timezone(&Utc);
+        let indexed_at = DateTime::parse_from_rfc3339(&ts)
+          .map_err(|e| StoreError::InvalidTimestamp(e.to_string()))?
+          .with_timezone(&Utc);
         Ok(Some(Document {
           id,
           content_hash,
@@ -309,8 +310,9 @@ impl Storage for SqliteStorage {
     let docs = rows
       .into_iter()
       .map(|(id, content_hash, content_size, ts)| {
-        let indexed_at =
-          DateTime::parse_from_rfc3339(&ts).map_err(|e| StoreError::Other(e.to_string()))?.with_timezone(&Utc);
+        let indexed_at = DateTime::parse_from_rfc3339(&ts)
+          .map_err(|e| StoreError::InvalidTimestamp(e.to_string()))?
+          .with_timezone(&Utc);
         Ok(Document {
           id,
           content_hash,
@@ -522,7 +524,14 @@ impl StorageTx for SqliteTransaction {
 
   fn add_vectors(&mut self, chunk_ids: &[String], embeddings: &[Vec<f32>]) -> Result<()> {
     if chunk_ids.len() != embeddings.len() {
-      return Err(StoreError::Other("chunk_ids and embeddings length mismatch".into()).into());
+      return Err(
+        StoreError::ArgumentMismatch {
+          what: "chunk_ids and embeddings".into(),
+          a: chunk_ids.len(),
+          b: embeddings.len(),
+        }
+        .into(),
+      );
     }
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     insert_vectors(&conn, chunk_ids, embeddings).map_err(map_rusqlite)?;
@@ -531,7 +540,14 @@ impl StorageTx for SqliteTransaction {
 
   fn add_fts_chunks(&mut self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()> {
     if chunk_ids.len() != tokenized_texts.len() {
-      return Err(StoreError::Other("chunk_ids and tokenized_texts length mismatch".into()).into());
+      return Err(
+        StoreError::ArgumentMismatch {
+          what: "chunk_ids and tokenized_texts".into(),
+          a: chunk_ids.len(),
+          b: tokenized_texts.len(),
+        }
+        .into(),
+      );
     }
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     insert_fts(&conn, chunk_ids, tokenized_texts).map_err(map_rusqlite)?;
@@ -557,7 +573,7 @@ impl StorageTx for SqliteTransaction {
 
   fn commit(&mut self) -> Result<()> {
     if self.committed {
-      return Err(StoreError::Other("transaction already committed".into()).into());
+      return Err(StoreError::TransactionAlreadyCommitted.into());
     }
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     conn.execute_batch("COMMIT").map_err(map_rusqlite)?;
@@ -828,7 +844,7 @@ mod tests {
       tx.add_document(&doc).unwrap();
       tx.add_chunks(&[chunk]).unwrap();
       tx.add_vectors(&["c1".to_string(), "c2".to_string()], &[vec![0.0_f32; 512]]).unwrap_err();
-      Err::<(), _>(StoreError::Other("forced".into()))
+      Err::<(), _>(StoreError::Sqlite("forced".into()))
     };
     assert!(result.is_err());
 

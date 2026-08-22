@@ -17,7 +17,7 @@ impl FastEmbedReranker {
   pub async fn from_model_hub(hub: &ModelHub, spec: &ModelSpec) -> Result<Self> {
     let model = reranker_model_for(&spec.repo_id)?;
     let options = RerankInitOptions::new(model).with_cache_dir(hub.cache_dir().to_path_buf());
-    let inner = TextRerank::try_new(options).map_err(|e| ModelError::Other(e.to_string()))?;
+    let inner = TextRerank::try_new(options).map_err(|e| ModelError::ModelInitFailed(e.to_string()))?;
     Ok(Self {
       inner: Mutex::new(inner),
       model_name: spec.repo_id.clone(),
@@ -27,7 +27,7 @@ impl FastEmbedReranker {
   pub fn from_model_hub_sync(hub: &ModelHub, spec: &ModelSpec) -> Result<Self> {
     let model = reranker_model_for(&spec.repo_id)?;
     let options = RerankInitOptions::new(model).with_cache_dir(hub.cache_dir().to_path_buf());
-    let inner = TextRerank::try_new(options).map_err(|e| ModelError::Other(e.to_string()))?;
+    let inner = TextRerank::try_new(options).map_err(|e| ModelError::ModelInitFailed(e.to_string()))?;
     Ok(Self {
       inner: Mutex::new(inner),
       model_name: spec.repo_id.clone(),
@@ -45,7 +45,7 @@ fn reranker_model_for(repo_id: &str) -> Result<RerankerModel> {
     RERANKER_REPO_BGE_V2_M3 | RERANKER_REPO_BGE_V2_M3_ALT => Ok(RerankerModel::BGERerankerV2M3),
     RERANKER_REPO_JINA_V1_TURBO_EN => Ok(RerankerModel::JINARerankerV1TurboEn),
     RERANKER_REPO_JINA_V2_MULTILINGUAL => Ok(RerankerModel::JINARerankerV2BaseMultiligual),
-    other => Err(ModelError::Other(format!("unsupported reranker model: {other}")).into()),
+    other => Err(ModelError::UnsupportedModel(format!("unsupported reranker model: {other}")).into()),
   }
 }
 
@@ -53,10 +53,10 @@ fn reranker_model_for(repo_id: &str) -> Result<RerankerModel> {
 impl Reranker for FastEmbedReranker {
   async fn rerank(&self, query: &str, chunks: &[Chunk]) -> Result<Vec<ScoredChunk>> {
     let documents: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-    let mut inner = self.inner.lock().map_err(|_| RetrieveError::Other("mutex poisoned".into()))?;
+    let mut inner = self.inner.lock().map_err(|_| RetrieveError::MutexPoisoned)?;
     let results = inner
       .rerank(query.to_string(), &documents, false, None)
-      .map_err(|e| RetrieveError::Other(e.to_string()))?;
+      .map_err(|e| RetrieveError::RerankFailed(e.to_string()))?;
 
     let scored = results
       .into_iter()

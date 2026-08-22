@@ -117,7 +117,7 @@ impl Engine {
 
   fn open_storage(workspace_path: &Path) -> Result<Arc<dyn Storage>> {
     std::fs::create_dir_all(workspace_path)
-      .map_err(|e| docq_core::StoreError::Other(format!("create workspace dir: {e}")))?;
+      .map_err(|e| docq_core::StoreError::Io(format!("create workspace dir: {e}")))?;
     let storage: Arc<dyn Storage> = Arc::new(SqliteStorage::open_workspace(workspace_path)?);
     Ok(storage)
   }
@@ -135,8 +135,8 @@ impl Engine {
       checksum: None,
     };
     let path = hub.resolve(&tokenizer_spec).await?;
-    let tokenizer = tokenizers::Tokenizer::from_file(&path)
-      .map_err(|e| docq_core::LlmError::Other(format!("load tokenizer: {e}")))?;
+    let tokenizer =
+      tokenizers::Tokenizer::from_file(&path).map_err(|e| docq_core::LlmError::TokenizerLoad(e.to_string()))?;
     Ok(Arc::new(SentenceSplitter::new(
       tokenizer,
       indexing.chunk_size,
@@ -267,15 +267,15 @@ impl Engine {
       }),
     );
 
-    components.reranker = Some(reranker.map_err(|e| docq_core::ModelError::Other(format!("reranker task: {e}")))??);
-    components.llm = Some(llm.map_err(|e| docq_core::ModelError::Other(format!("llm task: {e}")))??);
+    components.reranker = Some(reranker.map_err(|e| docq_core::ModelError::TaskJoin(e.to_string()))??);
+    components.llm = Some(llm.map_err(|e| docq_core::ModelError::TaskJoin(e.to_string()))??);
 
     Ok((components, hub))
   }
 
   pub fn add_collection(&self, path: impl AsRef<Path>, name: &str) -> Result<()> {
     let canonical = std::fs::canonicalize(path.as_ref())
-      .map_err(|e| docq_core::StoreError::Other(format!("canonicalize {}: {e}", path.as_ref().display())))?;
+      .map_err(|e| docq_core::StoreError::Io(format!("canonicalize {}: {e}", path.as_ref().display())))?;
     let path_str = canonical.to_string_lossy().to_string();
     let mut tx = self.storage.begin_tx()?;
     tx.add_collection(name, &path_str)?;
@@ -304,7 +304,7 @@ impl Engine {
     let col = collections
       .into_iter()
       .find(|c| c.name == name)
-      .ok_or_else(|| docq_core::StoreError::Other(format!("collection not found: {name}")))?;
+      .ok_or_else(|| docq_core::StoreError::NotFound(name.to_string()))?;
     self.indexer.index_directory(&col.path).await
   }
 
@@ -313,10 +313,7 @@ impl Engine {
   }
 
   pub async fn ask(&self, query: &str) -> Result<docq_core::Answer> {
-    let synth = self
-      .synthesizer
-      .as_ref()
-      .ok_or_else(|| docq_core::LlmError::Other("LLM not loaded — use open_for_ask".into()))?;
+    let synth = self.synthesizer.as_ref().ok_or(docq_core::LlmError::NotLoaded)?;
     synth.ask(query).await
   }
 

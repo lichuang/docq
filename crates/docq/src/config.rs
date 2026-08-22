@@ -72,8 +72,8 @@ impl TryFrom<LlmGenerationConfig> for LlmConfig {
   fn try_from(c: LlmGenerationConfig) -> Result<Self, Self::Error> {
     Ok(Self {
       n_ctx: c.n_ctx,
-      temperature: c.temperature.parse().map_err(|e| LlmError::Other(format!("invalid temperature: {e}")))?,
-      top_p: c.top_p.parse().map_err(|e| LlmError::Other(format!("invalid top_p: {e}")))?,
+      temperature: c.temperature.parse().map_err(|e| LlmError::InvalidConfig(format!("invalid temperature: {e}")))?,
+      top_p: c.top_p.parse().map_err(|e| LlmError::InvalidConfig(format!("invalid top_p: {e}")))?,
       max_tokens: c.max_tokens,
       seed: c.seed,
       system_prompt: c.system_prompt,

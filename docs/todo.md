@@ -84,11 +84,10 @@
 
 ## 三、设计 / API 改进
 
-### P2-13. 所有错误类型都是 `Other(String)` — 无法结构化匹配
+### P2-13. ~~所有错误类型都是 `Other(String)` — 无法结构化匹配~~ ✅ 已完成
 
-- 文件：`crates/docq-core/src/error.rs`
-- 现状：7 个 enum 全只有 `Other(String)`，调用方无法区分 "文件不存在" vs "权限拒绝" vs "schema 错误"。
-- 修复：给 `StoreError` 加 `NotFound`/`SchemaMismatch`/`InvalidDimension`，给 `EmbedError` 加 `ModelLoadFailed`/`EmptyResult` 等。
+- 文件：`crates/docq-core/src/error.rs` + 全 crate 60 个创建点
+- 改动：将 7 个 error enum 从单一 `Other(String)` 改为结构化变体。`StoreError` → `Sqlite`/`MutexPoisoned`/`InvalidDimension`/`SchemaMismatch`/`TransactionAlreadyCommitted`/`ArgumentMismatch`/`Io`/`NotFound`/`InvalidTimestamp`；`EmbedError` → `EmptyResult`/`MutexPoisoned`/`InferenceFailed`；`RetrieveError` → `TaskJoin`/`MutexPoisoned`/`RerankFailed`；`LlmError` → `BackendInit`/`ModelLoad`/`InferenceFailed`/`NotLoaded`/`InvalidConfig`/`TokenizerLoad`；`ModelError` → `ModelInitFailed`/`ModelInfoFailed`/`UnsupportedModel`/`DownloadFailed`/`HubApiFailed`/`TaskJoin`；`ParseError` → `Io`/`ExtractFailed`/`ZipFailed`/`ZipEntryMissing`/`XmlParseFailed`。`SynthError` 保留 `Other`（无创建点）。`cargo check --workspace` + `clippy -D warnings` + `fmt --check` 全通过。
 
 ### P2-14. `ModelSpec.role` 是 String — 应为 enum
 

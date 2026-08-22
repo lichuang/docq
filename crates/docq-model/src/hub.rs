@@ -31,10 +31,14 @@ impl ModelHub {
       .with_cache_dir(self.cache_dir.clone())
       .with_progress(true)
       .build()
-      .map_err(|e| ModelError::Other(e.to_string()))?;
+      .map_err(|e| ModelError::HubApiFailed(e.to_string()))?;
 
     let repo = Repo::with_revision(spec.repo_id.clone(), RepoType::Model, spec.revision.clone());
-    api.repo(repo).get(&spec.filename).map_err(|e| ModelError::Other(e.to_string())).map_err(Into::into)
+    api
+      .repo(repo)
+      .get(&spec.filename)
+      .map_err(|e| ModelError::DownloadFailed(e.to_string()))
+      .map_err(Into::into)
   }
 
   pub fn ensure_sync(&self, spec: &ModelSpec, storage: &dyn Storage) -> Result<PathBuf> {
@@ -50,9 +54,13 @@ impl ModelHub {
       .with_cache_dir(self.cache_dir.clone())
       .with_progress(true)
       .build()
-      .map_err(|e| ModelError::Other(e.to_string()))?;
+      .map_err(|e| ModelError::HubApiFailed(e.to_string()))?;
 
     let repo = Repo::with_revision(spec.repo_id.clone(), RepoType::Model, spec.revision.clone());
-    api.repo(repo).get(&spec.filename).map_err(|e| ModelError::Other(e.to_string())).map_err(Into::into)
+    api
+      .repo(repo)
+      .get(&spec.filename)
+      .map_err(|e| ModelError::DownloadFailed(e.to_string()))
+      .map_err(Into::into)
   }
 }

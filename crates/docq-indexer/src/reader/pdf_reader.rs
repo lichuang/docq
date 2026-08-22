@@ -22,9 +22,14 @@ impl FileReader for PdfReader {
   }
 
   fn read(&self, path: &Path) -> Result<Option<docq_core::DocumentSource>> {
-    let bytes = std::fs::read(path).map_err(|e| ParseError::Other(format!("read {}: {e}", path.display())))?;
-    let text = pdf_extract::extract_text_from_mem(&bytes)
-      .map_err(|e| ParseError::Other(format!("pdf extract {}: {e}", path.display())))?;
+    let bytes = std::fs::read(path).map_err(|e| ParseError::Io {
+      path: path.display().to_string(),
+      source: e,
+    })?;
+    let text = pdf_extract::extract_text_from_mem(&bytes).map_err(|e| ParseError::ExtractFailed {
+      path: path.display().to_string(),
+      message: e.to_string(),
+    })?;
 
     if text.trim().is_empty() {
       Ok(None)

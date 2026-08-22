@@ -25,19 +25,28 @@ impl FileReader for DocxReader {
   }
 
   fn read(&self, path: &Path) -> Result<Option<docq_core::DocumentSource>> {
-    let bytes = std::fs::read(path).map_err(|e| ParseError::Other(format!("read {}: {e}", path.display())))?;
+    let bytes = std::fs::read(path).map_err(|e| ParseError::Io {
+      path: path.display().to_string(),
+      source: e,
+    })?;
     let cursor = Cursor::new(&bytes);
-    let mut archive =
-      zip::ZipArchive::new(cursor).map_err(|e| ParseError::Other(format!("open docx {}: {e}", path.display())))?;
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| ParseError::ZipFailed {
+      path: path.display().to_string(),
+      message: e.to_string(),
+    })?;
 
     let mut xml = String::new();
     {
-      let mut entry = archive
-        .by_name("word/document.xml")
-        .map_err(|e| ParseError::Other(format!("document.xml missing in {}: {e}", path.display())))?;
-      entry
-        .read_to_string(&mut xml)
-        .map_err(|e| ParseError::Other(format!("read document.xml in {}: {e}", path.display())))?;
+      let mut entry = archive.by_name("word/document.xml").map_err(|e| ParseError::ZipEntryMissing {
+        path: path.display().to_string(),
+        entry: "word/document.xml".into(),
+        message: e.to_string(),
+      })?;
+      entry.read_to_string(&mut xml).map_err(|e| ParseError::ZipEntryMissing {
+        path: path.display().to_string(),
+        entry: "word/document.xml".into(),
+        message: e.to_string(),
+      })?;
     }
 
     let text = extract_text(&xml)?;
@@ -68,14 +77,16 @@ fn extract_text(xml: &str) -> Result<String> {
         _ => {}
       },
       Ok(Event::Text(e)) if in_text_node => {
-        let chunk = e.unescape().map_err(|err| ParseError::Other(format!("unescape docx text: {err}")))?;
+        let chunk = e.unescape().map_err(|err| ParseError::XmlParseFailed {
+          message: format!("unescape docx text: {err}"),
+        })?;
         text.push_str(&chunk);
       }
       Ok(Event::End(e)) if e.name().as_ref() == b"w:t" => {
         in_text_node = false;
       }
       Ok(Event::Eof) => break,
-      Err(e) => return Err(ParseError::Other(format!("parse document.xml: {e}")).into()),
+      Err(e) => return Err(ParseError::XmlParseFailed { message: e.to_string() }.into()),
       _ => {}
     }
     buf.clear();

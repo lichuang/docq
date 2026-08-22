@@ -22,12 +22,12 @@ impl GgufLlm {
   pub async fn from_model_hub(hub: &ModelHub, spec: &ModelSpec, config: &LlmConfig) -> Result<Self> {
     let path = hub.resolve(spec).await?;
 
-    let mut backend = LlamaBackend::init().map_err(|e| LlmError::Other(format!("init backend: {e}")))?;
+    let mut backend = LlamaBackend::init().map_err(|e| LlmError::BackendInit(e.to_string()))?;
     backend.void_logs();
     let model_params = LlamaModelParams::default();
-    let model = LlamaModel::load_from_file(&backend, &path, &model_params)
-      .map_err(|e| LlmError::Other(format!("load model: {e}")))?;
-    let chat_template = model.chat_template(None).map_err(|e| LlmError::Other(format!("get chat template: {e}")))?;
+    let model =
+      LlamaModel::load_from_file(&backend, &path, &model_params).map_err(|e| LlmError::ModelLoad(e.to_string()))?;
+    let chat_template = model.chat_template(None).map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
     Ok(Self {
       backend,
@@ -40,12 +40,12 @@ impl GgufLlm {
   pub fn from_model_hub_sync(hub: &ModelHub, spec: &ModelSpec, config: &LlmConfig) -> Result<Self> {
     let path = hub.resolve_sync(spec)?;
 
-    let mut backend = LlamaBackend::init().map_err(|e| LlmError::Other(format!("init backend: {e}")))?;
+    let mut backend = LlamaBackend::init().map_err(|e| LlmError::BackendInit(e.to_string()))?;
     backend.void_logs();
     let model_params = LlamaModelParams::default();
-    let model = LlamaModel::load_from_file(&backend, &path, &model_params)
-      .map_err(|e| LlmError::Other(format!("load model: {e}")))?;
-    let chat_template = model.chat_template(None).map_err(|e| LlmError::Other(format!("get chat template: {e}")))?;
+    let model =
+      LlamaModel::load_from_file(&backend, &path, &model_params).map_err(|e| LlmError::ModelLoad(e.to_string()))?;
+    let chat_template = model.chat_template(None).map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
     Ok(Self {
       backend,
@@ -61,20 +61,19 @@ impl Llm for GgufLlm {
   async fn complete(&self, prompt: &str) -> Result<String> {
     let messages = [
       LlamaChatMessage::new("system".into(), self.config.system_prompt.clone())
-        .map_err(|e| LlmError::Other(format!("create system message: {e}")))?,
-      LlamaChatMessage::new("user".into(), prompt.to_string())
-        .map_err(|e| LlmError::Other(format!("create user message: {e}")))?,
+        .map_err(|e| LlmError::InferenceFailed(e.to_string()))?,
+      LlamaChatMessage::new("user".into(), prompt.to_string()).map_err(|e| LlmError::InferenceFailed(e.to_string()))?,
     ];
 
     let formatted = self
       .model
       .apply_chat_template(&self.chat_template, &messages, true)
-      .map_err(|e| LlmError::Other(format!("apply chat template: {e}")))?;
+      .map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
     let tokens = self
       .model
       .str_to_token(&formatted, AddBos::Always)
-      .map_err(|e| LlmError::Other(format!("tokenize: {e}")))?;
+      .map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
     let ctx_params = LlamaContextParams::default()
       .with_n_ctx(NonZeroU32::new(self.config.n_ctx))
@@ -82,7 +81,7 @@ impl Llm for GgufLlm {
     let mut ctx = self
       .model
       .new_context(&self.backend, ctx_params)
-      .map_err(|e| LlmError::Other(format!("create context: {e}")))?;
+      .map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
     // Reserve room for the generated answer so we do not overflow the KV cache.
     let max_prompt_tokens = (self.config.n_ctx as usize).saturating_sub(self.config.max_tokens).max(1);
@@ -101,10 +100,10 @@ impl Llm for GgufLlm {
     for (i, token) in prompt_tokens.iter().enumerate() {
       batch
         .add(*token, i as i32, &[0], i == prompt_tokens.len() - 1)
-        .map_err(|e| LlmError::Other(format!("batch add: {e}")))?;
+        .map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
     }
 
-    ctx.decode(&mut batch).map_err(|e| LlmError::Other(format!("decode: {e}")))?;
+    ctx.decode(&mut batch).map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
     let mut sampler = LlamaSampler::chain_simple([
       LlamaSampler::temp(self.config.temperature),
@@ -126,15 +125,13 @@ impl Llm for GgufLlm {
       let piece = self
         .model
         .token_to_piece(token, &mut decoder, true, None)
-        .map_err(|e| LlmError::Other(format!("detokenize: {e}")))?;
+        .map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
       output.push_str(&piece);
 
       batch.clear();
-      batch
-        .add(token, pos, &[0], true)
-        .map_err(|e| LlmError::Other(format!("batch add generated: {e}")))?;
+      batch.add(token, pos, &[0], true).map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
 
-      ctx.decode(&mut batch).map_err(|e| LlmError::Other(format!("decode generated: {e}")))?;
+      ctx.decode(&mut batch).map_err(|e| LlmError::InferenceFailed(e.to_string()))?;
     }
 
     Ok(output)

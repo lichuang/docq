@@ -83,7 +83,7 @@ impl Retriever {
       let _step = verbose.start("BM25 recall");
       storage.search_text(&safe_query, bm25_top_k)
     });
-    handle.await.map_err(|e| RetrieveError::Other(format!("bm25 task: {e}")))?
+    handle.await.map_err(|e| RetrieveError::TaskJoin(e.to_string()))?
   }
 
   /// Semantic recall using dense vector KNN search.
@@ -94,13 +94,7 @@ impl Retriever {
   async fn vector_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
     let query_embedding = {
       let _step = self.verbose.start("embed query");
-      self
-        .embedder
-        .embed(&[query.to_string()])
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| EmbedError::Other("empty embedding result".into()))?
+      self.embedder.embed(&[query.to_string()]).await?.into_iter().next().ok_or(EmbedError::EmptyResult)?
     };
     let _step = self.verbose.start("vector recall");
     self.storage.search_vectors(&query_embedding, self.vector_top_k)

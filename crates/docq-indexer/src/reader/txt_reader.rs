@@ -42,7 +42,13 @@ impl FileReader for TextFileReader {
         }
       }
       Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Ok(None),
-      Err(e) => Err(ParseError::Other(format!("read {}: {e}", path.display())).into()),
+      Err(e) => Err(
+        ParseError::Io {
+          path: path.display().to_string(),
+          source: e,
+        }
+        .into(),
+      ),
     }
   }
 }
