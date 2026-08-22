@@ -70,20 +70,20 @@ impl Chunker for SentenceSplitter {
       return Vec::new();
     }
 
-    let mut units: Vec<String> = Vec::new();
+    let mut units: Vec<(String, usize)> = Vec::new();
     for para in Self::split_paragraphs(text) {
       for sentence in Self::split_sentences(para) {
         let st = self.token_count(&sentence);
         if st <= self.chunk_size {
-          units.push(sentence);
+          units.push((sentence, st));
         } else {
           for word in Self::split_words(&sentence) {
             let wt = self.token_count(&word);
             if wt <= self.chunk_size {
-              units.push(word);
+              units.push((word, wt));
             } else {
               for ch in Self::split_chars(&word) {
-                units.push(ch);
+                units.push((ch, 1));
               }
             }
           }
@@ -92,35 +92,33 @@ impl Chunker for SentenceSplitter {
     }
 
     let mut chunks: Vec<ChunkCandidate> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
+    let mut current: Vec<(String, usize)> = Vec::new();
     let mut current_tokens = 0usize;
     let mut current_start = 0usize;
 
     let mut byte_pos = 0usize;
-    for unit in &units {
+    for (unit, unit_tokens) in &units {
       let unit_bytes = unit.len();
-      let unit_tokens = self.token_count(unit);
 
       if current_tokens + unit_tokens > self.chunk_size && !current.is_empty() {
-        let joined = current.join("");
+        let joined = current.iter().map(|(s, _)| s.as_str()).collect::<String>();
         let end = current_start + joined.len();
         chunks.push(ChunkCandidate {
           text: joined.clone(),
           byte_range: current_start..end,
         });
 
-        let mut overlap_units: Vec<String> = Vec::new();
+        let mut overlap_units: Vec<(String, usize)> = Vec::new();
         let mut overlap_tokens = 0usize;
-        for u in current.iter().rev() {
-          let ut = self.token_count(u);
+        for (u, ut) in current.iter().rev() {
           if overlap_tokens + ut > self.chunk_overlap {
             break;
           }
           overlap_tokens += ut;
-          overlap_units.insert(0, u.clone());
+          overlap_units.insert(0, (u.clone(), *ut));
         }
 
-        let overlap_bytes: usize = overlap_units.iter().map(|s| s.len()).sum();
+        let overlap_bytes: usize = overlap_units.iter().map(|(s, _)| s.len()).sum();
 
         current = overlap_units;
         current_tokens = overlap_tokens;
@@ -130,13 +128,13 @@ impl Chunker for SentenceSplitter {
       if current.is_empty() {
         current_start = byte_pos;
       }
-      current.push(unit.clone());
+      current.push((unit.clone(), *unit_tokens));
       current_tokens += unit_tokens;
       byte_pos += unit_bytes;
     }
 
     if !current.is_empty() {
-      let joined = current.join("");
+      let joined = current.iter().map(|(s, _)| s.as_str()).collect::<String>();
       let end = current_start + joined.len();
       chunks.push(ChunkCandidate {
         text: joined,

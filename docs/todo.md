@@ -51,23 +51,20 @@
 - 现状：只设了 `busy_timeout`，无 `PRAGMA journal_mode=WAL`。写事务阻塞所有读。
 - 修复：open 时执行 `PRAGMA journal_mode=WAL`。
 
-### P2-9. `SentenceSplitter::token_count` 重复计算
+### P2-9. ~~`SentenceSplitter::token_count` 重复计算~~ ✅ 已完成
 
-- 文件：`crates/docq-indexer/src/chunker.rs:100-102` 和 `114-116`
-- 现状：构建 chunk 和计算 overlap 时对同一 unit 重复调 tokenizer encode。
-- 修复：缓存 `(unit → token_count)` 或首次计算时存入 struct。
+- 文件：`crates/docq-indexer/src/chunker.rs`
+- 改动：`chunk()` 中 units 从 `Vec<String>` 改为 `Vec<(String, usize)>`，分割阶段计算 token_count 并缓存，构建 chunk 和计算 overlap 时直接复用缓存值，消除重复 tokenizer encode 调用。
 
-### P2-10. `prepare_file` 对每个文件单独查 DB 检查 content_hash
+### P2-10. ~~`prepare_file` 对每个文件单独查 DB 检查 content_hash~~ ✅ 已完成
 
-- 文件：`crates/docq-indexer/src/lib.rs:154-158`
-- 现状：大目录（1000+ 文件）N 次独立查询。
-- 修复：预先 `list_documents()` 一次拿到所有 hash，内存中比对。
+- 文件：`crates/docq-indexer/src/indexer.rs`
+- 改动：`index_directory` 和 `index_file` 预先 `list_documents()` 一次构建 `HashMap<String, Document>`，传给 `prepare_file` 在内存中比对 content_hash。`sweep_deleted` 也复用同一份 `list_documents()` 结果，避免重复查询。
 
-### P2-11. `flush_batch` 内对每个文件重复查 `get_document`
+### P2-11. ~~`flush_batch` 内对每个文件重复查 `get_document`~~ ✅ 已完成
 
-- 文件：`crates/docq-indexer/src/lib.rs:208`
-- 现状：`prepare_file` 已知文件是否存在（通过 content_hash），但信息未传递到 `flush_batch`，多一次 DB 往返。
-- 修复：在 `PendingFile` 中加 `is_update: bool` 字段，从 `prepare_file` 传递。
+- 文件：`crates/docq-indexer/src/indexer.rs`
+- 改动：`PendingFile` 新增 `is_update: bool` 字段，由 `prepare_file` 在内存比对时设置。`flush_batch` 根据 `is_update` 决定是否调 `delete_chunks_by_doc`，不再对每个文件查 `get_document`。
 
 ### P3-12. 每次 CLI 调用都重新加载全部模型
 

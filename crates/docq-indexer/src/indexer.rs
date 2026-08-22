@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -57,6 +58,7 @@ struct PendingFile {
   chunks: Vec<Chunk>,
   chunk_texts: Vec<String>,
   tokenized_texts: Vec<String>,
+  is_update: bool,
 }
 
 impl Indexer {
@@ -81,7 +83,9 @@ impl Indexer {
         });
       }
     };
-    match self.prepare_file(&doc_src.path, &doc_src.content)? {
+    let existing_docs = self.storage.list_documents()?;
+    let existing_map: HashMap<String, Document> = existing_docs.into_iter().map(|d| (d.id.clone(), d)).collect();
+    match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map)? {
       Some(pending) => {
         let mut batch = vec![pending];
         self.flush_batch(&mut batch).await
@@ -103,7 +107,10 @@ impl Indexer {
     let current_doc_ids: std::collections::HashSet<String> =
       docs.iter().map(|d| sha256_hex(&d.path.to_string_lossy())).collect();
 
-    stats.files_removed = self.sweep_deleted(path, &current_doc_ids)?;
+    let all_docs = self.storage.list_documents()?;
+    stats.files_removed = self.sweep_deleted(path, &current_doc_ids, &all_docs)?;
+
+    let existing_map: HashMap<String, Document> = all_docs.into_iter().map(|d| (d.id.clone(), d)).collect();
 
     for (i, doc_src) in docs.iter().enumerate() {
       self.verbose.log(&format!(
@@ -114,7 +121,7 @@ impl Indexer {
         doc_src.path.display()
       ));
 
-      match self.prepare_file(&doc_src.path, &doc_src.content)? {
+      match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map)? {
         Some(pf) => {
           pending_chunk_count += pf.chunks.len();
           pending.push(pf);
@@ -140,9 +147,12 @@ impl Indexer {
     Ok(stats)
   }
 
-  fn sweep_deleted(&self, dir: &Path, current_doc_ids: &std::collections::HashSet<String>) -> Result<usize> {
-    let _step = self.verbose.start("sweep deleted");
-    let all_docs = self.storage.list_documents()?;
+  fn sweep_deleted(
+    &self,
+    dir: &Path,
+    current_doc_ids: &std::collections::HashSet<String>,
+    all_docs: &[Document],
+  ) -> Result<usize> {
     if all_docs.is_empty() {
       return Ok(0);
     }
@@ -153,7 +163,7 @@ impl Indexer {
     let dir_prefix = dir.to_string_lossy().to_string();
     let mut removed = 0usize;
 
-    for doc in &all_docs {
+    for doc in all_docs {
       if current_doc_ids.contains(&doc.id) {
         continue;
       }
@@ -175,16 +185,24 @@ impl Indexer {
 
   /// Read a single file's content, skip unchanged/empty files, and build a
   /// `PendingFile` ready for batched embedding and storage.
-  fn prepare_file(&self, path: &Path, content: &str) -> Result<Option<PendingFile>> {
+  fn prepare_file(
+    &self,
+    path: &Path,
+    content: &str,
+    existing_docs: &HashMap<String, Document>,
+  ) -> Result<Option<PendingFile>> {
     let content_hash = sha256_hex(content);
     let path_str = path.to_string_lossy().to_string();
     let doc_id = sha256_hex(&path_str);
 
-    if let Some(existing) = self.storage.get_document(&doc_id)?
-      && existing.content_hash == content_hash
-    {
-      return Ok(None);
-    }
+    let is_update = if let Some(existing) = existing_docs.get(&doc_id) {
+      if existing.content_hash == content_hash {
+        return Ok(None);
+      }
+      true
+    } else {
+      false
+    };
 
     let candidates = self.chunker.chunk(content);
     if candidates.is_empty() {
@@ -216,6 +234,7 @@ impl Indexer {
       chunks,
       chunk_texts,
       tokenized_texts,
+      is_update,
     }))
   }
 
@@ -234,7 +253,7 @@ impl Indexer {
       let chunk_ids: Vec<String> = pf.chunks.iter().map(|c| c.id.clone()).collect();
 
       let mut tx = self.storage.begin_tx()?;
-      if self.storage.get_document(&pf.doc.id)?.is_some() {
+      if pf.is_update {
         tx.delete_chunks_by_doc(&pf.doc.id)?;
       }
       tx.add_document(&pf.doc)?;
