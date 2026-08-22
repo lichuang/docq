@@ -101,11 +101,10 @@
 - 现状：`temperature`/`top_p` 存为 String 避免序列化精度问题，再解析回来。
 - 修复：用 `#[serde(with = ...)]` 或自定义 newtype 更干净。
 
-### P2-17. `build_chunker` 硬编码 tokenizer 文件名
+### P2-17. ~~`build_chunker` 硬编码 tokenizer 文件名~~ ✅ 已完成
 
-- 文件：`crates/docq/src/engine.rs:133`
-- 现状：即使配了 BGE-M3，也从 M3 的 repo 下 `BGE_SMALL_ZH_V1_5_TOKENIZER_FILE`("tokenizer.json")。隐式耦合，未来加无 tokenizer.json 的模型会静默失败。
-- 修复：让 `ModelSpec` 或 `ModelEntry` 携带 tokenizer filename，或统一约定。
+- 文件：`crates/docq/src/config.rs`、`crates/docq/src/engine.rs`
+- 改动：`ModelEntry` 新增 `tokenizer_filename` 字段（`#[serde(default)]` 向后兼容旧 config.toml）。`build_chunker` 和 `load_embedding` 改为接收 `tokenizer_filename` 参数，从 `engine_config.config.models.embedding.tokenizer_filename` 传入。删除 `engine.rs` 中对 `BGE_SMALL_ZH_V1_5_TOKENIZER_FILE` 常量的硬编码引用。
 
 ### P2-18. `SentenceSplitter::split_paragraphs` 用三个换行 `\n\n\n`
 

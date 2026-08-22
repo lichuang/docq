@@ -18,6 +18,12 @@ pub struct ModelEntry {
   pub repo_id: String,
   pub filename: String,
   pub revision: String,
+  #[serde(default = "default_tokenizer_filename")]
+  pub tokenizer_filename: String,
+}
+
+fn default_tokenizer_filename() -> String {
+  docq_model::BGE_SMALL_ZH_V1_5_TOKENIZER_FILE.into()
 }
 
 impl ModelEntry {
@@ -125,6 +131,7 @@ impl Default for ModelEntry {
       repo_id: docq_model::BGE_SMALL_ZH_V1_5_REPO.into(),
       filename: docq_model::BGE_SMALL_ZH_V1_5_FILE.into(),
       revision: "main".into(),
+      tokenizer_filename: docq_model::BGE_SMALL_ZH_V1_5_TOKENIZER_FILE.into(),
     }
   }
 }
@@ -136,16 +143,19 @@ impl Default for ModelsConfig {
         repo_id: docq_model::BGE_SMALL_ZH_V1_5_REPO.into(),
         filename: docq_model::BGE_SMALL_ZH_V1_5_FILE.into(),
         revision: "main".into(),
+        tokenizer_filename: docq_model::BGE_SMALL_ZH_V1_5_TOKENIZER_FILE.into(),
       },
       reranker: ModelEntry {
         repo_id: docq_model::BGE_RERANKER_BASE_REPO.into(),
         filename: docq_model::BGE_RERANKER_BASE_FILE.into(),
         revision: "main".into(),
+        tokenizer_filename: default_tokenizer_filename(),
       },
       llm: ModelEntry {
         repo_id: docq_model::QWEN2_5_3B_INSTRUCT_GGUF_REPO.into(),
         filename: docq_model::QWEN2_5_3B_INSTRUCT_Q4_K_M_FILE.into(),
         revision: "main".into(),
+        tokenizer_filename: default_tokenizer_filename(),
       },
     }
   }

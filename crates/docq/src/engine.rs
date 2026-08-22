@@ -14,7 +14,7 @@ use docq_indexer::PdfReader;
 use docq_indexer::{
   IndexStats, Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, SentenceSplitter, TextFileReader,
 };
-use docq_model::{BGE_SMALL_ZH_V1_5_TOKENIZER_FILE, FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
+use docq_model::{FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
 use docq_retrieve::{Retriever, RetrieverConfig};
 
 use crate::config::{DocqConfig, RetrievalConfig};
@@ -125,12 +125,13 @@ impl Engine {
   async fn build_chunker(
     hub: &ModelHub,
     emb_spec: &ModelSpec,
+    tokenizer_filename: &str,
     indexing: &crate::config::IndexingConfig,
   ) -> Result<Arc<dyn Chunker>> {
     let tokenizer_spec = ModelSpec {
       role: ModelRole::Tokenizer,
       repo_id: emb_spec.repo_id.clone(),
-      filename: BGE_SMALL_ZH_V1_5_TOKENIZER_FILE.into(),
+      filename: tokenizer_filename.into(),
       revision: emb_spec.revision.clone(),
       checksum: None,
     };
@@ -148,11 +149,12 @@ impl Engine {
     hub: &ModelHub,
     storage: &dyn Storage,
     spec: &ModelSpec,
+    tokenizer_filename: &str,
     indexing: &crate::config::IndexingConfig,
   ) -> Result<(Arc<dyn Embedder>, Arc<dyn Chunker>)> {
     hub.ensure(spec, storage).await?;
     let embedder = Arc::new(FastEmbedEmbedder::from_model_hub(hub, spec).await?);
-    let chunker = Self::build_chunker(hub, spec, indexing).await?;
+    let chunker = Self::build_chunker(hub, spec, tokenizer_filename, indexing).await?;
     Ok((embedder, chunker))
   }
 
@@ -208,9 +210,17 @@ impl Engine {
     let hub = ModelHub::new(engine_config.model_cache_dir.clone());
     let storage = Self::open_storage(&engine_config.workspace_path)?;
     let emb_spec = engine_config.config.models.embedding.to_spec(ModelRole::Embedding);
+    let tokenizer_filename = engine_config.config.models.embedding.tokenizer_filename.clone();
     let (embedder, chunker) = {
       let _step = engine_config.verbose.start("load embedding model");
-      Self::load_embedding(&hub, storage.as_ref(), &emb_spec, &engine_config.config.indexing).await?
+      Self::load_embedding(
+        &hub,
+        storage.as_ref(),
+        &emb_spec,
+        &tokenizer_filename,
+        &engine_config.config.indexing,
+      )
+      .await?
     };
     storage.init(embedder.dimension())?;
 
