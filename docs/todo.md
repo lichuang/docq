@@ -154,10 +154,10 @@
 - 现状：Qwen2.5-3B q4_k_m（~1.9GB），生成 7.8 秒。
 - 修复：Qwen2.5-1.5B 或 Qwen2.5-0.5B，速度 2-4 倍提升，质量下降。
 
-### P3-28. 换更快的 reranker
+### P3-28. ~~换更快的 reranker~~ ✅ 已完成
 
-- 现状：BGE-reranker-base ONNX，rerank 3.1 秒。
-- 修复：jina-reranker-v1-turbo-en 比 BGE-reranker-base 快 2-3 倍。
+- 文件：`~/.config/docq/config.toml`
+- 改动：reranker 从 `BAAI/bge-reranker-base` 换为 `jinaai/jina-reranker-v1-turbo-en`。rerank 从 3144ms → 731ms（4.3 倍），ask 总耗时从 11.9s → 6.5s。回答质量可接受。
 
 ## 六、已有的其他 todo
 

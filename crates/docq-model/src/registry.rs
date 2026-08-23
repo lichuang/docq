@@ -37,6 +37,7 @@ pub const RERANKER_REPO_BGE_V2_M3: &str = "BAAI/bge-reranker-v2-m3";
 /// Same model as above, mirrored under a different HF repo.
 pub const RERANKER_REPO_BGE_V2_M3_ALT: &str = "rozgo/bge-reranker-v2-m3";
 pub const RERANKER_REPO_JINA_V1_TURBO_EN: &str = "jinaai/jina-reranker-v1-turbo-en";
+pub const RERANKER_JINA_V1_TURBO_EN_FILE: &str = "onnx/model.onnx";
 pub const RERANKER_REPO_JINA_V2_MULTILINGUAL: &str = "jinaai/jina-reranker-v2-base-multilingual";
 
 pub struct ModelRegistry;
@@ -55,8 +56,8 @@ impl ModelRegistry {
   pub fn default_reranker() -> ModelSpec {
     ModelSpec {
       role: ModelRole::Reranker,
-      repo_id: BGE_RERANKER_BASE_REPO.into(),
-      filename: BGE_RERANKER_BASE_FILE.into(),
+      repo_id: RERANKER_REPO_JINA_V1_TURBO_EN.into(),
+      filename: RERANKER_JINA_V1_TURBO_EN_FILE.into(),
       revision: "main".into(),
       checksum: None,
     }
