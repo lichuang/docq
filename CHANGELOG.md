@@ -1,4 +1,47 @@
-## [0.1.0] - 2026-08-13
+## [0.2.0] - 2026-08-23
+
+### 🚀 Features
+
+- *(indexer)* Route single-file indexing through ReaderRegistry and add a per-extension read_file API
+- *(storage)* Create vector table with dynamic dimension from embedder instead of hardcoded 512
+- *(logging)* Introduce flexi_logger for file-based logging with configurable path, size rotation, and optional stderr duplication via config.toml and CLI flags
+- *(verbose)* Route Verbose progress messages to the log file under the 'docq' target and ensure they remain visible on the terminal when log duplication is disabled
+- Enable Metal GPU acceleration and suppress ggml_metal_device_init log noise via early ggml_log_set no-op callback
+
+### 🐛 Bug Fixes
+
+- Preserve chunk-to-doc mapping via chunk_documents junction table to prevent cross-file dedup attribution errors
+- Make tokenizer filename configurable in ModelEntry instead of hardcoding BGE_SMALL_ZH_V1_5_TOKENIZER_FILE
+- Use atomic single-statement write for model version to avoid SQLite nested-transaction error during parallel model loading
+- Enable SQLite foreign keys and WAL mode, and use little-endian for vector bytes to ensure cross-arch portability
+- Skip vec_chunks creation on init(0) and pass 0 from init/add/status commands to avoid dimension mismatch when embedding model differs from default
+- Increase default LLM n_ctx from 4096 to 8192 to prevent prompt truncation and preserve full retrieval context
+
+### 🚜 Refactor
+
+- *(indexer)* Flatten Indexer to own its component fields, and document known correctness defects
+- Separate stable doc_id from file_path via document_paths and resolve file paths in SearchHit
+- *(engine)* Extract base model-loading helper including ModelHub creation for open_for_index, open_for_search, and open_for_ask
+- *(engine)* Extract base model-loading helper including ModelHub creation for open_for_index, open_for_search, and open_for_ask
+- *(retriever)* Flatten Retriever to own its component fields directly from RetrieverConfig
+- *(docq-retrieve)* Split hybrid search pipeline into focused helpers; feat(fusion): generalize RRF to multiple recall channels; doc(docq-retrieve): document each retrieval stage and score semantics
+- *(docq-synth)* Move Synthesizer and SynthesizerConfig into synthesizer.rs and flatten config fields directly onto the struct
+- Replace all Other(String) error variants with structured variants across 6 error enums
+- Extract Indexer struct, IndexStats, and tests into indexer.rs, and split run_command into per-subcommand handler functions
+- Replace ModelSpec.role String with ModelRole enum across all crates
+
+### 📚 Documentation
+
+- Update docs
+
+### ⚡ Performance
+
+- Parallelize BM25 and vector recall in Retriever::search via spawn_blocking and tokio::join!
+- Parallelize reranker and LLM loading in Engine::open_for_ask via spawn_blocking and tokio::join!
+- Cache token_count in chunker, batch-petch document hashes, and pass is_update to eliminate redundant DB queries in indexer
+- Switch default reranker from BGE-reranker-base to jina-reranker-v1-turbo-en for 4x faster reranking
+- Switch default reranker from BGE-reranker-base to jina-reranker-v1-turbo-en for 4x faster reranking
+## [0.1.0] - 2026-08-15
 
 ### 🚀 Features
 
@@ -27,6 +70,7 @@
 
 - *(retrieve)* Quote FTS5 query tokens to avoid syntax errors on hyphens and special characters, add verbose index progress and timing, and document the bundled testdata/en example
 - *(model)* Raise BGE-small-zh max tokens from 512 to 1024; fix(model): align llama.cpp n_batch with n_ctx and truncate over-budget prompts to prevent GGML_ASSERT aborts on large chunks
+- *(build)* Vendor patched esaxx-rs to use dynamic CRT on Windows and avoid LNK2038 linker mismatch
 
 ### 🚜 Refactor
 
@@ -36,6 +80,22 @@
 - *(indexer)* Batch embedding calls up to 500 chunks and extract prepare_file helper to reduce ONNX invocation overhead; doc(readme): polish bundled testdata attribution and grammar
 - *(indexer)* Reorganize reader module by moving TextFileReader to reader/txt_reader.rs and ReaderRegistry to reader_registry.rs for clearer separation of format readers and dispatch logic
 
+### 📚 Documentation
+
+- Update docs
+- Update docs
+- Update docs
+- Update docs
+- Update docs
+- Update docs
+- Update docs
+- Update docs
+- Update docs
+
 ### ⚙️ Miscellaneous Tasks
 
 - *(release)* Prepare all workspace crates for crates.io with required metadata, versioned internal dependencies, a version-aware publish script, and fix clippy warnings
+- *(ci)* Add release workflow to build multi-platform binaries and generate changelog
+- *(release)* Build x86_64-apple-darwin on macos-latest via cross-compilation
+- *(release)* Ensure cross-compilation target is installed for rust-toolchain.toml
+- *(release)* Drop x86_64-apple-darwin prebuilt binary due to missing ONNX Runtime binaries
