@@ -126,7 +126,40 @@
 - 现状：`Arc<Mutex<Connection>>` 序列化所有操作，但未测试多线程下不死锁/不 panic。library 用户可能并发调 `search`。
 - 修复：加多线程并发读写测试。
 
-## 五、已有的其他 todo
+## 五、Ask 性能优化（来自实测 profiling）
+
+> 基于 M1 Max + Metal GPU，ask 总耗时 11.9 秒（检索 ~4s + LLM ~7.8s）。
+
+### P3-23. 降低 `rerank_top_n`（已搁置 — 回答质量下降，已回滚）
+
+- 尝试：`rerank_top_n` 从 20 改为 10，rerank 时间减半但回答质量明显下降，已回滚。
+
+### P3-24. jieba 首次初始化冷启动
+
+- 现状：jieba 首次调用 794ms（`OnceLock` 加载词典），纯英文查询也无谓走 jieba。
+- 备注：第二次查询已快，无法完全消除。可考虑英文查询跳过 jieba 分词。
+
+### P3-25. ~~LLM prompt 截断~~ ✅ 已完成
+
+- 文件：`crates/docq/src/config.rs`、`crates/docq-core/src/models.rs`
+- 改动：`n_ctx` 默认值从 4096 改为 8192（`LlmGenerationConfig` 和 `LlmConfig` 两处），消除 prompt 截断。生成速度不受影响，仅增加 KV cache 内存占用。
+
+### P3-26. 降低 LLM `max_tokens`
+
+- 现状：`max_tokens = 512`，LLM 生成 7.8 秒。
+- 修复：降低到 256 可线性缩短到 ~4 秒，但可能截断长答案。
+
+### P3-27. 换更小的 LLM
+
+- 现状：Qwen2.5-3B q4_k_m（~1.9GB），生成 7.8 秒。
+- 修复：Qwen2.5-1.5B 或 Qwen2.5-0.5B，速度 2-4 倍提升，质量下降。
+
+### P3-28. 换更快的 reranker
+
+- 现状：BGE-reranker-base ONNX，rerank 3.1 秒。
+- 修复：jina-reranker-v1-turbo-en 比 BGE-reranker-base 快 2-3 倍。
+
+## 六、已有的其他 todo
 
 - index by multi thread
 - use lancedb for vector storage/search

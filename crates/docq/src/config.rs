@@ -187,7 +187,7 @@ impl Default for LlmGenerationConfig {
       temperature: "0.7".into(),
       top_p: "0.9".into(),
       max_tokens: 512,
-      n_ctx: 4096,
+      n_ctx: 8192,
       seed: 0,
       system_prompt: "You are a helpful assistant.".into(),
     }

@@ -130,7 +130,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
   fn default() -> Self {
     Self {
-      n_ctx: 4096,
+      n_ctx: 8192,
       temperature: 0.7,
       top_p: 0.9,
       max_tokens: 512,
