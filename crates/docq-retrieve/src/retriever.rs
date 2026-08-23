@@ -89,8 +89,7 @@ impl Retriever {
   /// Semantic recall using dense vector KNN search.
   ///
   /// Embeds the query and searches the sqlite-vec `vec_chunks` table.
-  /// Returns `(chunk_id, cosine_distance)` tuples. The caller is responsible
-  /// for converting distance to similarity.
+  /// Returns `(chunk_id, similarity)` tuples (higher = closer).
   async fn vector_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
     let query_embedding = {
       let _step = self.verbose.start("embed query");
@@ -206,9 +205,8 @@ impl Retriever {
   ///    indexed text (jieba), escape FTS5 special characters, and search the
   ///    `fts_chunks` table.
   /// 2. **Vector semantic recall** — embed the query and run a KNN search on
-  ///    `vec_chunks` using cosine distance. The distance is converted to a
-  ///    similarity score so that all scores follow the "higher is better"
-  ///    convention.
+  ///    `vec_chunks` using cosine distance. The storage layer converts distance
+  ///    to similarity (`1.0 - distance`) so all scores follow "higher is better".
   /// 3. **RRF fusion** — combine BM25 and vector rankings with Reciprocal
   ///    Rank Fusion. Only ranks matter here, not raw scores.
   /// 4. **Optional reranking** — if a cross-encoder reranker is configured,
@@ -220,7 +218,7 @@ impl Retriever {
   ///
   /// Score directions in `ScoreExplain` are unified to "higher is better":
   /// - `bm25_score`: raw FTS5 BM25 score (higher = more relevant)
-  /// - `vector_score`: derived similarity = `1.0 - distance` (higher = closer)
+  /// - `vector_score`: similarity score from storage layer (higher = closer)
   /// - `rrf_score`: RRF fused score (higher = better rank)
   /// - `rerank_score` / `final_score`: cross-encoder score (higher = more
   ///   relevant); when no reranker is configured, `final_score = rrf_score`.
@@ -259,7 +257,7 @@ impl Retriever {
 
     // Build lookup maps for per-channel scores shown in ScoreExplain.
     let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
-    let vector_map: HashMap<String, f32> = vector_raw.iter().map(|(id, dist)| (id.clone(), 1.0 - dist)).collect();
+    let vector_map: HashMap<String, f32> = vector_raw.iter().cloned().collect();
 
     // ---- Assemble SearchHit with per-stage ScoreExplain ----
     Ok(self.assemble_hits(

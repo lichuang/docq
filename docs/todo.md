@@ -108,11 +108,10 @@
 
 ## 四、Minor
 
-### P3-19. `ScoreExplain` 的 `vector_score` 方向转换散落在 retriever 中
+### P3-19. ~~`ScoreExplain` 的 `vector_score` 方向转换散落在 retriever 中~~ ✅ 已完成
 
-- 文件：`crates/docq-retrieve/src/retriever.rs:259`
-- 现状：`1.0 - dist` 转换散落在 retriever，sqlite-vec 语义变化需在此改。
-- 修复：转换逻辑封装在 storage 层。
+- 文件：`crates/docq-storage/src/sqlite.rs`、`crates/docq-retrieve/src/retriever.rs`
+- 改动：`search_vectors` 在 storage 层直接返回 `1.0 - distance`（similarity），retriever 不再做转换。`test_vector_search` 的断言方向从 `<` 改为 `>`。
 
 ### P3-20. `IndexStats::merge` 可用 `Add` trait
 

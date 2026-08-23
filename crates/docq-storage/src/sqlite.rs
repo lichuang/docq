@@ -422,9 +422,13 @@ impl Storage for SqliteStorage {
          ORDER BY distance",
       )
       .map_err(map_rusqlite)?;
+    // sqlite-vec returns cosine distance (0 = identical, 2 = opposite).
+    // Convert to similarity (1.0 = identical, -1.0 = opposite) so all
+    // channels follow the "higher is better" convention uniformly.
     let rows = stmt
       .query_map(params![bytes, top_k as i64], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, f32>(1)?))
+        let distance: f32 = r.get(1)?;
+        Ok((r.get::<_, String>(0)?, 1.0 - distance))
       })
       .map_err(map_rusqlite)?
       .collect::<rusqlite::Result<Vec<_>>>()
@@ -830,7 +834,7 @@ mod tests {
     let hits = storage.search_vectors(&query, 3).unwrap();
     assert_eq!(hits.len(), 3);
     assert_eq!(hits[0].0, "c3");
-    assert!(hits[0].1 < hits[1].1);
+    assert!(hits[0].1 > hits[1].1);
   }
 
   #[test]
