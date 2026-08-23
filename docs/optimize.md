@@ -103,13 +103,9 @@
 
 > 与上面 1-6 节的性能方向不同，本节是**已确认的正确性 bug 或设计未实现**。它们会导致检索结果静默错误或直接崩溃，应优先于任何性能优化处理。
 
-### 7.1 embedding 模型升级后旧向量静默错配（设计未实现）
+### 7.1 embedding 模型升级后旧向量静默错配 ✅ 已完成
 
-- **位置**：`docq-indexer/src/lib.rs`（`prepare_file` / `flush_batch`）、`docq-model/src/hub.rs`
-- **现状**：`prepare_file` 只对比 `content_hash` 跳过未变文件。`hub.ensure` 无条件 `set_model_version`，但**没有任何代码读取 `get_model_version` 来对比当前 spec 并触发重索引**。`get_model_version` 在整个代码库中只在测试里被调用。
-- **影响**：用户更换 embedding 模型（如 `bge-small-zh` → `bge-m3`）后，所有 chunk 向量都变了，但文件 hash 未变 → 全部被跳过，继续用旧模型向量做语义检索，结果静默错误。
-- **AGENTS.md 声称**"embedding 模型升级会触发显式重索引"，但该机制**未接线**。
-- **建议**：在 `index_directory` 开头对比 `storage.get_model_version("embedding")` 与当前 spec，不一致则强制全量重嵌入（忽略 `content_hash` 跳过逻辑）。
+- 改动：新增 `meta(key, value)` KV 表。`Indexer` 新增 `needs_reindex()` 同时检查 embedding spec 变化和 indexing 配置变化（chunk_size/chunk_overlap），任一不一致则强制全量重索引。索引完成后写入 `model_versions` + `meta["indexing"]`。
 
 ### 7.2 `SentenceSplitter` 的 `byte_range` 与原文偏移错位
 

@@ -41,6 +41,9 @@ pub struct EngineComponents {
   pub readers: ReaderRegistry,
   pub retrieval: RetrievalConfig,
   pub verbose: Verbose,
+  pub embedding_spec: ModelSpec,
+  pub chunk_size: usize,
+  pub chunk_overlap: usize,
 }
 
 pub struct Engine {
@@ -63,6 +66,9 @@ impl Engine {
       readers,
       retrieval,
       verbose,
+      embedding_spec,
+      chunk_size,
+      chunk_overlap,
     } = components;
 
     let indexer = Indexer::new(IndexerConfig {
@@ -72,6 +78,9 @@ impl Engine {
       storage: storage.clone(),
       readers,
       verbose,
+      embedding_spec,
+      chunk_size,
+      chunk_overlap,
     });
 
     let retriever = Arc::new(Retriever::new(RetrieverConfig {
@@ -234,6 +243,9 @@ impl Engine {
       readers: Self::default_readers(),
       retrieval: engine_config.config.retrieval.clone(),
       verbose: engine_config.verbose,
+      embedding_spec: emb_spec,
+      chunk_size: engine_config.config.indexing.chunk_size,
+      chunk_overlap: engine_config.config.indexing.chunk_overlap,
     };
 
     Ok((components, hub))
@@ -427,6 +439,15 @@ mod tests {
         rerank_top_n: 20,
       },
       verbose: Verbose(false),
+      embedding_spec: ModelSpec {
+        role: ModelRole::Embedding,
+        repo_id: "stub/embedding".into(),
+        filename: "model.onnx".into(),
+        revision: "main".into(),
+        checksum: None,
+      },
+      chunk_size: 1024,
+      chunk_overlap: 102,
     }
   }
 
@@ -500,6 +521,15 @@ mod tests {
         rerank_top_n: 20,
       },
       verbose: Verbose(false),
+      embedding_spec: ModelSpec {
+        role: ModelRole::Embedding,
+        repo_id: "stub/embedding".into(),
+        filename: "model.onnx".into(),
+        revision: "main".into(),
+        checksum: None,
+      },
+      chunk_size: 1024,
+      chunk_overlap: 102,
     };
     let engine = Engine::new(components);
     let result = engine.ask("test").await;

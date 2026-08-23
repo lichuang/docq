@@ -297,7 +297,7 @@ fn sanitize_fts5_query(query: &str) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use docq_core::{ChunkCandidate, Chunker, Embedder, Reranker, Result, ScoredChunk, Storage};
+  use docq_core::{ChunkCandidate, Chunker, Embedder, ModelRole, ModelSpec, Reranker, Result, ScoredChunk, Storage};
   use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, TextFileReader};
   use docq_storage::SqliteStorage;
   use tempfile::TempDir;
@@ -355,6 +355,15 @@ mod tests {
         storage: storage.clone(),
         readers: test_readers(),
         verbose: Verbose(false),
+        embedding_spec: ModelSpec {
+          role: ModelRole::Embedding,
+          repo_id: "stub/embedding".into(),
+          filename: "model.onnx".into(),
+          revision: "main".into(),
+          checksum: None,
+        },
+        chunk_size: 1024,
+        chunk_overlap: 102,
       });
       indexer.index_file(&path).await.unwrap();
     }

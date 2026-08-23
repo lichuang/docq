@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
-use docq_core::{Chunk, Chunker, Document, Embedder, Result, Storage, Verbose, WordSegmenter};
+use docq_core::{Chunk, Chunker, Document, Embedder, ModelRole, ModelSpec, Result, Storage, Verbose, WordSegmenter};
 use sha2::{Digest, Sha256};
 
 use crate::ReaderRegistry;
@@ -45,6 +45,9 @@ pub struct IndexerConfig {
   pub storage: Arc<dyn Storage>,
   pub readers: ReaderRegistry,
   pub verbose: Verbose,
+  pub embedding_spec: ModelSpec,
+  pub chunk_size: usize,
+  pub chunk_overlap: usize,
 }
 
 pub struct Indexer {
@@ -54,6 +57,9 @@ pub struct Indexer {
   storage: Arc<dyn Storage>,
   readers: ReaderRegistry,
   verbose: Verbose,
+  embedding_spec: ModelSpec,
+  chunk_size: usize,
+  chunk_overlap: usize,
 }
 
 struct PendingFile {
@@ -74,7 +80,33 @@ impl Indexer {
       storage: config.storage,
       readers: config.readers,
       verbose: config.verbose,
+      embedding_spec: config.embedding_spec,
+      chunk_size: config.chunk_size,
+      chunk_overlap: config.chunk_overlap,
     }
+  }
+
+  fn needs_reindex(&self) -> Result<bool> {
+    let model_changed = match self.storage.get_model_version(ModelRole::Embedding)? {
+      None => true,
+      Some(spec) => {
+        spec.repo_id != self.embedding_spec.repo_id
+          || spec.filename != self.embedding_spec.filename
+          || spec.revision != self.embedding_spec.revision
+      }
+    };
+    if model_changed {
+      return Ok(true);
+    }
+    let expected_chunk = format!("{}:{}", self.chunk_size, self.chunk_overlap);
+    let chunk_changed = self.storage.get_meta("indexing")?.as_deref() != Some(expected_chunk.as_str());
+    Ok(chunk_changed)
+  }
+
+  fn update_index_meta(&self) -> Result<()> {
+    self.storage.set_model_version_atomic(ModelRole::Embedding, &self.embedding_spec)?;
+    self.storage.set_meta_atomic("indexing", &format!("{}:{}", self.chunk_size, self.chunk_overlap))?;
+    Ok(())
   }
 
   pub async fn index_file(&self, path: &Path) -> Result<IndexStats> {
@@ -89,10 +121,15 @@ impl Indexer {
     };
     let existing_docs = self.storage.list_documents()?;
     let existing_map: HashMap<String, Document> = existing_docs.into_iter().map(|d| (d.id.clone(), d)).collect();
-    match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map)? {
+    let force_reindex = self.needs_reindex()?;
+    match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map, force_reindex)? {
       Some(pending) => {
         let mut batch = vec![pending];
-        self.flush_batch(&mut batch).await
+        let stats = self.flush_batch(&mut batch).await?;
+        if force_reindex {
+          self.update_index_meta()?;
+        }
+        Ok(stats)
       }
       None => Ok(IndexStats {
         files_skipped: 1,
@@ -116,6 +153,11 @@ impl Indexer {
 
     let existing_map: HashMap<String, Document> = all_docs.into_iter().map(|d| (d.id.clone(), d)).collect();
 
+    let force_reindex = self.needs_reindex()?;
+    if force_reindex {
+      self.verbose.log("indexing config or embedding model changed — forcing full re-index");
+    }
+
     for (i, doc_src) in docs.iter().enumerate() {
       self.verbose.log(&format!(
         "chunking file {}/{} ({:.0}%): {}",
@@ -125,7 +167,7 @@ impl Indexer {
         doc_src.path.display()
       ));
 
-      match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map)? {
+      match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map, force_reindex)? {
         Some(pf) => {
           pending_chunk_count += pf.chunks.len();
           pending.push(pf);
@@ -146,6 +188,10 @@ impl Indexer {
       let s = self.flush_batch(&mut pending).await?;
       stats.files_indexed += s.files_indexed;
       stats.chunks_indexed += s.chunks_indexed;
+    }
+
+    if force_reindex {
+      self.update_index_meta()?;
     }
 
     Ok(stats)
@@ -194,13 +240,14 @@ impl Indexer {
     path: &Path,
     content: &str,
     existing_docs: &HashMap<String, Document>,
+    force_reembed: bool,
   ) -> Result<Option<PendingFile>> {
     let content_hash = sha256_hex(content);
     let path_str = path.to_string_lossy().to_string();
     let doc_id = sha256_hex(&path_str);
 
     let is_update = if let Some(existing) = existing_docs.get(&doc_id) {
-      if existing.content_hash == content_hash {
+      if !force_reembed && existing.content_hash == content_hash {
         return Ok(None);
       }
       true
@@ -318,6 +365,20 @@ mod tests {
     }
   }
 
+  fn test_embedding_spec() -> ModelSpec {
+    ModelSpec {
+      role: ModelRole::Embedding,
+      repo_id: "stub/embedding".into(),
+      filename: "model.onnx".into(),
+      revision: "main".into(),
+      checksum: None,
+    }
+  }
+
+  fn test_indexing_config() -> (usize, usize) {
+    (1024, 102)
+  }
+
   fn test_readers() -> ReaderRegistry {
     let mut reg = ReaderRegistry::new();
     reg.register(Arc::new(TextFileReader::new()));
@@ -331,6 +392,7 @@ mod tests {
   }
 
   fn test_indexer(storage: SqliteStorage) -> Indexer {
+    let (chunk_size, chunk_overlap) = test_indexing_config();
     Indexer::new(IndexerConfig {
       chunker: Arc::new(StubChunker),
       embedder: Arc::new(StubEmbedder { dim: 512 }),
@@ -338,6 +400,9 @@ mod tests {
       storage: Arc::new(storage),
       readers: test_readers(),
       verbose: Verbose(false),
+      embedding_spec: test_embedding_spec(),
+      chunk_size,
+      chunk_overlap,
     })
   }
 
@@ -421,6 +486,9 @@ mod tests {
       storage: storage.clone(),
       readers: test_readers(),
       verbose: Verbose(false),
+      embedding_spec: test_embedding_spec(),
+      chunk_size: 1024,
+      chunk_overlap: 102,
     });
     indexer.index_directory(tmp.path()).await.unwrap();
 
@@ -435,6 +503,9 @@ mod tests {
       storage: storage.clone(),
       readers: test_readers(),
       verbose: Verbose(false),
+      embedding_spec: test_embedding_spec(),
+      chunk_size: 1024,
+      chunk_overlap: 102,
     });
     let stats = indexer2.index_directory(tmp.path()).await.unwrap();
     assert_eq!(stats.files_removed, 1);
@@ -458,11 +529,71 @@ mod tests {
       storage: storage.clone(),
       readers: test_readers(),
       verbose: Verbose(false),
+      embedding_spec: test_embedding_spec(),
+      chunk_size: 1024,
+      chunk_overlap: 102,
     });
 
     indexer.index_file(&path).await.unwrap();
 
     let hits = storage.search_text("共识 算法", 10).unwrap();
     assert_eq!(hits.len(), 1);
+  }
+
+  #[tokio::test]
+  async fn test_model_upgrade_triggers_reembed() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("note.txt");
+    std::fs::write(&path, "hello world").unwrap();
+
+    let storage = Arc::new(test_storage());
+
+    let spec_v1 = ModelSpec {
+      role: ModelRole::Embedding,
+      repo_id: "stub/embedding-v1".into(),
+      filename: "model.onnx".into(),
+      revision: "main".into(),
+      checksum: None,
+    };
+    let indexer_v1 = Indexer::new(IndexerConfig {
+      chunker: Arc::new(StubChunker),
+      embedder: Arc::new(StubEmbedder { dim: 512 }),
+      segmenter: Arc::new(JiebaSegmenter),
+      storage: storage.clone(),
+      readers: test_readers(),
+      verbose: Verbose(false),
+      embedding_spec: spec_v1,
+      chunk_size: 1024,
+      chunk_overlap: 102,
+    });
+    let stats1 = indexer_v1.index_file(&path).await.unwrap();
+    assert_eq!(stats1.files_indexed, 1);
+
+    let stats2 = indexer_v1.index_file(&path).await.unwrap();
+    assert_eq!(stats2.files_skipped, 1, "same model — file should be skipped");
+
+    let spec_v2 = ModelSpec {
+      role: ModelRole::Embedding,
+      repo_id: "stub/embedding-v2".into(),
+      filename: "model.onnx".into(),
+      revision: "main".into(),
+      checksum: None,
+    };
+    let indexer_v2 = Indexer::new(IndexerConfig {
+      chunker: Arc::new(StubChunker),
+      embedder: Arc::new(StubEmbedder { dim: 512 }),
+      segmenter: Arc::new(JiebaSegmenter),
+      storage: storage.clone(),
+      readers: test_readers(),
+      verbose: Verbose(false),
+      embedding_spec: spec_v2,
+      chunk_size: 1024,
+      chunk_overlap: 102,
+    });
+    let stats3 = indexer_v2.index_file(&path).await.unwrap();
+    assert_eq!(stats3.files_indexed, 1, "model changed — file must be re-embedded");
+
+    let recorded = storage.get_model_version(ModelRole::Embedding).unwrap().unwrap();
+    assert_eq!(recorded.repo_id, "stub/embedding-v2");
   }
 }

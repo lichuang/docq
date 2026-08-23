@@ -274,6 +274,10 @@ impl Storage for SqliteStorage {
         CREATE TABLE IF NOT EXISTS collections (
           name TEXT PRIMARY KEY,
           path TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS meta (
+          key   TEXT PRIMARY KEY,
+          value TEXT NOT NULL
         );",
       )
       .map_err(map_rusqlite)?;
@@ -512,6 +516,26 @@ impl Storage for SqliteStorage {
   fn set_model_version_atomic(&self, role: ModelRole, version: &ModelSpec) -> Result<()> {
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     set_model_version(&conn, role, version).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn get_meta(&self, key: &str) -> Result<Option<String>> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    let value: Option<String> = conn
+      .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| r.get(0))
+      .optional()
+      .map_err(map_rusqlite)?;
+    Ok(value)
+  }
+
+  fn set_meta_atomic(&self, key: &str, value: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    conn
+      .execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+        params![key, value],
+      )
+      .map_err(map_rusqlite)?;
     Ok(())
   }
 

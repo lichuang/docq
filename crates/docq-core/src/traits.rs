@@ -65,6 +65,8 @@ pub trait Storage: Send + Sync {
   fn search_text(&self, query: &str, top_k: usize) -> Result<Vec<(String, f32)>>;
   fn get_model_version(&self, role: ModelRole) -> Result<Option<ModelSpec>>;
   fn set_model_version_atomic(&self, role: ModelRole, version: &ModelSpec) -> Result<()>;
+  fn get_meta(&self, key: &str) -> Result<Option<String>>;
+  fn set_meta_atomic(&self, key: &str, value: &str) -> Result<()>;
   fn list_collections(&self) -> Result<Vec<Collection>>;
 
   // ---- counts ----

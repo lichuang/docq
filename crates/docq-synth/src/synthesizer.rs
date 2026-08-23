@@ -100,7 +100,7 @@ impl Synthesizer {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use docq_core::{Chunker, Embedder, Storage};
+  use docq_core::{Chunker, Embedder, ModelRole, ModelSpec, Storage};
   use docq_indexer::{Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, TextFileReader};
   use docq_retrieve::{Retriever, RetrieverConfig};
   use docq_storage::SqliteStorage;
@@ -182,6 +182,15 @@ mod tests {
         storage: storage.clone(),
         readers: test_readers(),
         verbose: Verbose(false),
+        embedding_spec: ModelSpec {
+          role: ModelRole::Embedding,
+          repo_id: "stub/embedding".into(),
+          filename: "model.onnx".into(),
+          revision: "main".into(),
+          checksum: None,
+        },
+        chunk_size: 1024,
+        chunk_overlap: 102,
       });
       indexer.index_file(&path).await.unwrap();
     }
