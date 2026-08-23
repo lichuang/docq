@@ -210,10 +210,6 @@ fn set_model_version(conn: &Connection, role: ModelRole, version: &ModelSpec) ->
 
 impl Storage for SqliteStorage {
   fn init(&self, vector_dimension: usize) -> Result<()> {
-    if vector_dimension == 0 {
-      return Err(StoreError::InvalidDimension.into());
-    }
-
     let conn = self.conn.lock().map_err(|_| poisoned())?;
     conn
       .execute_batch(
@@ -281,6 +277,9 @@ impl Storage for SqliteStorage {
         );",
       )
       .map_err(map_rusqlite)?;
+    if vector_dimension == 0 {
+      return Ok(());
+    }
     self.init_vectors(&conn, vector_dimension)
   }
 

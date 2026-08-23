@@ -9,7 +9,6 @@ use config::{DocqConfig, LoggingConfig};
 
 use clap::{Parser, Subcommand};
 use docq_core::{EngineStatus, Storage, Verbose};
-use docq_model::BGE_SMALL_ZH_V1_5_DIMENSION;
 use docq_storage::SqliteStorage;
 use flexi_logger::{Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, Logger, Naming, Record, WriteMode};
 use serde::Serialize;
@@ -325,7 +324,7 @@ async fn run_command(
 fn run_init(workspace: &Path) -> anyhow::Result<()> {
   fs::create_dir_all(workspace)?;
   let storage = SqliteStorage::open_workspace(workspace)?;
-  storage.init(BGE_SMALL_ZH_V1_5_DIMENSION)?;
+  storage.init(0)?;
   println!("Initialized workspace at {}", workspace.display());
   Ok(())
 }
@@ -459,7 +458,7 @@ async fn run_ask(
 
 fn open_storage(workspace: &Path) -> anyhow::Result<SqliteStorage> {
   let storage = SqliteStorage::open_workspace(workspace)?;
-  storage.init(BGE_SMALL_ZH_V1_5_DIMENSION)?;
+  storage.init(0)?;
   Ok(storage)
 }
 

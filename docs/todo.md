@@ -4,17 +4,15 @@
 
 ## 一、Bug / 正确性问题（优先修复）
 
-### P0-1. `Storage::init` 违反 trait 契约 — dimension=0 应跳过建表
+### P0-1. ~~`Storage::init` 违反 trait 契约 — dimension=0 应跳过建表~~ ✅ 已完成
 
-- 文件：`crates/docq-storage/src/sqlite.rs:201-203`
-- 现状：`traits.rs:54-56` 文档说 "Pass `0` to skip creating the vector table when no embedder is available yet."，但实现中 dimension==0 直接报错。
-- 修复：dimension==0 时跳过 `init_vectors` 调用，直接返回 Ok。
+- 文件：`crates/docq-storage/src/sqlite.rs`
+- 改动：`init(0)` 不再报错，跳过 `init_vectors` 直接返回 Ok，符合 trait 文档约定。
 
-### P0-2. `docq add` 硬编码 dimension 初始化 vec_chunks
+### P0-2. ~~`docq add` 硬编码 dimension 初始化 vec_chunks~~ ✅ 已完成
 
-- 文件：`crates/docq/src/main.rs:414-418` (`open_storage`)
-- 现状：`add` 命令始终用 `BGE_SMALL_ZH_V1_5_DIMENSION`(512) 调 `init`。如果用户配置了 dim=1024 的模型（如 BGE-M3），`add` 先建了 `FLOAT[512]` 表，之后 `index` 调 `init(1024)` → dimension mismatch → 报错，无法索引。
-- 修复：`add` 不需要向量表，应传 0（配合 P0-1）或完全不调 `init`。
+- 文件：`crates/docq/src/main.rs`
+- 改动：`run_init` 和 `open_storage` 改为 `init(0)`（只建基础表，不建 vec_chunks）。删除 `BGE_SMALL_ZH_V1_5_DIMENSION` import。后续 `index` 命令通过 `Engine::open_for_index` 用真实 embedding 维度调 `init(dimension)` 建 vec_chunks。
 
 ### P0-3. ~~跨文件相同文本的 chunk dedup 丢失 doc_id 关联~~ ✅ 已完成
 
