@@ -20,47 +20,83 @@ impl SentenceSplitter {
     self.tokenizer.encode(text, false).map(|enc| enc.get_ids().len()).unwrap_or(text.chars().count())
   }
 
-  fn split_paragraphs(text: &str) -> Vec<&str> {
-    text.split("\n\n\n").filter(|p| !p.trim().is_empty()).collect()
+  fn split_paragraphs(text: &str) -> Vec<(&str, usize)> {
+    let mut result = Vec::new();
+    let mut search_start = 0;
+    loop {
+      let remaining = &text[search_start..];
+      match remaining.find("\n\n\n") {
+        Some(rel_pos) => {
+          let abs_start = search_start;
+          let abs_end = search_start + rel_pos;
+          let para = &text[abs_start..abs_end];
+          if !para.trim().is_empty() {
+            result.push((para, abs_start));
+          }
+          search_start = abs_end + 3;
+        }
+        None => {
+          let para = &text[search_start..];
+          if !para.trim().is_empty() {
+            result.push((para, search_start));
+          }
+          break;
+        }
+      }
+    }
+    result
   }
 
-  fn split_sentences(para: &str) -> Vec<String> {
+  fn split_sentences(para: &str, para_offset: usize) -> Vec<(&str, usize)> {
     let mut sentences = Vec::new();
-    let mut start = 0;
-    let chars: Vec<char> = para.chars().collect();
+    let mut char_start = 0;
 
-    for (i, &ch) in chars.iter().enumerate() {
+    for (byte_idx, ch) in para.char_indices() {
       if matches!(ch, '.' | '!' | '?' | '。' | '！' | '？') {
-        let end = i + 1;
-        let s: String = chars[start..end].iter().collect();
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-          sentences.push(s);
+        let byte_end = byte_idx + ch.len_utf8();
+        let slice = &para[char_start..byte_end];
+        if !slice.trim().is_empty() {
+          sentences.push((slice, para_offset + char_start));
         }
-        start = end;
+        char_start = byte_end;
       }
     }
 
-    if start < chars.len() {
-      let s: String = chars[start..].iter().collect();
-      if !s.trim().is_empty() {
-        sentences.push(s);
+    if char_start < para.len() {
+      let slice = &para[char_start..];
+      if !slice.trim().is_empty() {
+        sentences.push((slice, para_offset + char_start));
       }
     }
 
     if sentences.is_empty() && !para.trim().is_empty() {
-      vec![para.to_string()]
+      vec![(para, para_offset)]
     } else {
       sentences
     }
   }
 
-  fn split_words(sentence: &str) -> Vec<String> {
-    sentence.split_whitespace().map(|w| w.to_string()).collect()
+  fn split_words(sentence: &str, sentence_offset: usize) -> Vec<(&str, usize)> {
+    let mut result = Vec::new();
+    let mut search_start = 0;
+    while let Some(rel) = sentence[search_start..].find(|c: char| !c.is_whitespace()) {
+      let word_start = search_start + rel;
+      let remaining = &sentence[word_start..];
+      let word_end = remaining.find(|c: char| c.is_whitespace()).map(|p| word_start + p).unwrap_or(sentence.len());
+      result.push((&sentence[word_start..word_end], sentence_offset + word_start));
+      search_start = word_end;
+    }
+    result
   }
 
-  fn split_chars(text: &str) -> Vec<String> {
-    text.chars().map(|c| c.to_string()).collect()
+  fn split_chars(text: &str, text_offset: usize) -> Vec<(&str, usize)> {
+    text
+      .char_indices()
+      .map(|(byte_idx, ch)| {
+        let s = &text[byte_idx..byte_idx + ch.len_utf8()];
+        (s, text_offset + byte_idx)
+      })
+      .collect()
   }
 }
 
@@ -70,20 +106,21 @@ impl Chunker for SentenceSplitter {
       return Vec::new();
     }
 
-    let mut units: Vec<(String, usize)> = Vec::new();
-    for para in Self::split_paragraphs(text) {
-      for sentence in Self::split_sentences(para) {
-        let st = self.token_count(&sentence);
+    // Each unit: (text slice, byte offset in original text, token count)
+    let mut units: Vec<(&str, usize, usize)> = Vec::new();
+    for (para, para_offset) in Self::split_paragraphs(text) {
+      for (sentence, sentence_offset) in Self::split_sentences(para, para_offset) {
+        let st = self.token_count(sentence);
         if st <= self.chunk_size {
-          units.push((sentence, st));
+          units.push((sentence, sentence_offset, st));
         } else {
-          for word in Self::split_words(&sentence) {
-            let wt = self.token_count(&word);
+          for (word, word_offset) in Self::split_words(sentence, sentence_offset) {
+            let wt = self.token_count(word);
             if wt <= self.chunk_size {
-              units.push((word, wt));
+              units.push((word, word_offset, wt));
             } else {
-              for ch in Self::split_chars(&word) {
-                units.push((ch, 1));
+              for (ch, ch_offset) in Self::split_chars(word, word_offset) {
+                units.push((ch, ch_offset, 1));
               }
             }
           }
@@ -92,53 +129,50 @@ impl Chunker for SentenceSplitter {
     }
 
     let mut chunks: Vec<ChunkCandidate> = Vec::new();
-    let mut current: Vec<(String, usize)> = Vec::new();
+    let mut current: Vec<(&str, usize, usize)> = Vec::new();
     let mut current_tokens = 0usize;
-    let mut current_start = 0usize;
 
-    let mut byte_pos = 0usize;
-    for (unit, unit_tokens) in &units {
-      let unit_bytes = unit.len();
-
+    for &(unit, unit_offset, unit_tokens) in &units {
       if current_tokens + unit_tokens > self.chunk_size && !current.is_empty() {
-        let joined = current.iter().map(|(s, _)| s.as_str()).collect::<String>();
-        let end = current_start + joined.len();
+        let start = current[0].1;
+        let end = {
+          let last = current.last().unwrap();
+          last.1 + last.0.len()
+        };
+        let chunk_text = text[start..end].to_string();
         chunks.push(ChunkCandidate {
-          text: joined.clone(),
-          byte_range: current_start..end,
+          text: chunk_text,
+          byte_range: start..end,
         });
 
-        let mut overlap_units: Vec<(String, usize)> = Vec::new();
+        let mut overlap_units: Vec<(&str, usize, usize)> = Vec::new();
         let mut overlap_tokens = 0usize;
-        for (u, ut) in current.iter().rev() {
-          if overlap_tokens + ut > self.chunk_overlap {
+        for &u in current.iter().rev() {
+          if overlap_tokens + u.2 > self.chunk_overlap {
             break;
           }
-          overlap_tokens += ut;
-          overlap_units.insert(0, (u.clone(), *ut));
+          overlap_tokens += u.2;
+          overlap_units.insert(0, u);
         }
-
-        let overlap_bytes: usize = overlap_units.iter().map(|(s, _)| s.len()).sum();
 
         current = overlap_units;
         current_tokens = overlap_tokens;
-        current_start += joined.len() - overlap_bytes;
       }
 
-      if current.is_empty() {
-        current_start = byte_pos;
-      }
-      current.push((unit.clone(), *unit_tokens));
+      current.push((unit, unit_offset, unit_tokens));
       current_tokens += unit_tokens;
-      byte_pos += unit_bytes;
     }
 
     if !current.is_empty() {
-      let joined = current.iter().map(|(s, _)| s.as_str()).collect::<String>();
-      let end = current_start + joined.len();
+      let start = current[0].1;
+      let end = {
+        let last = current.last().unwrap();
+        last.1 + last.0.len()
+      };
+      let chunk_text = text[start..end].to_string();
       chunks.push(ChunkCandidate {
-        text: joined,
-        byte_range: current_start..end,
+        text: chunk_text,
+        byte_range: start..end,
       });
     }
 
@@ -219,6 +253,7 @@ mod tests {
     let chunks = splitter.chunk(text);
     assert_eq!(chunks.len(), 1, "with chunk_size=100 all 3 sentences fit in one chunk");
     assert_eq!(chunks[0].text, text);
+    assert_eq!(chunks[0].byte_range, 0..text.len());
   }
 
   #[test]
@@ -255,5 +290,42 @@ mod tests {
         chunks[1].byte_range.start
       );
     }
+  }
+
+  #[test]
+  fn test_byte_ranges_match_original_text() {
+    let tok = test_tokenizer();
+    let splitter = SentenceSplitter::new(tok, 5, 1);
+    let text = "First sentence here. Second one too. Third is short.";
+    let chunks = splitter.chunk(text);
+    for ch in &chunks {
+      let extracted = &text[ch.byte_range.start..ch.byte_range.end];
+      assert_eq!(
+        ch.text, *extracted,
+        "byte_range text mismatch: chunk text != text[range]"
+      );
+    }
+  }
+
+  #[test]
+  fn test_byte_ranges_with_multibyte_chars() {
+    let tok = test_tokenizer();
+    let splitter = SentenceSplitter::new(tok, 100, 10);
+    let text = "你好世界。这是测试！";
+    let chunks = splitter.chunk(text);
+    assert_eq!(chunks.len(), 1);
+    let extracted = &text[chunks[0].byte_range.start..chunks[0].byte_range.end];
+    assert_eq!(chunks[0].text, extracted);
+  }
+
+  #[test]
+  fn test_byte_ranges_with_paragraphs() {
+    let tok = test_tokenizer();
+    let splitter = SentenceSplitter::new(tok, 100, 10);
+    let text = "First paragraph.\n\n\nSecond paragraph.";
+    let chunks = splitter.chunk(text);
+    assert_eq!(chunks.len(), 1);
+    let extracted = &text[chunks[0].byte_range.start..chunks[0].byte_range.end];
+    assert_eq!(chunks[0].text, extracted);
   }
 }

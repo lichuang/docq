@@ -107,15 +107,9 @@
 
 - 改动：新增 `meta(key, value)` KV 表。`Indexer` 新增 `needs_reindex()` 同时检查 embedding spec 变化和 indexing 配置变化（chunk_size/chunk_overlap），任一不一致则强制全量重索引。索引完成后写入 `model_versions` + `meta["indexing"]`。
 
-### 7.2 `SentenceSplitter` 的 `byte_range` 与原文偏移错位
+### 7.2 `SentenceSplitter` 的 `byte_range` 与原文偏移错位 ✅ 已完成
 
-- **位置**：`docq-indexer/src/chunker.rs`（`split_paragraphs` / `split_sentences` / `chunk`）
-- **现状**：
-  - `split_paragraphs` 用 `text.split("\n\n\n")` 切分，**丢弃分隔符且不追踪原始字节偏移**。
-  - `split_sentences` 把段落转成 `Vec<char>` 再按标点切，用 `chars[start..end].iter().collect()` **重新拼成 String**，丢失了相对原文的字节偏移。
-  - `chunk` 阶段用 `current.join("")` 拼接 units 并累加 `byte_pos`，但 units 是重新 collect 的 String，不是原始切片。
-- **影响**：`Chunk.byte_range` 是基于"重新拼接后的文本"计算的，与原始文件字节偏移不一致。`ask` 流程的引用 `"docs/a.txt (bytes 120-512)"` 会指向错误位置。
-- **建议**：改为基于 `char_indices` / `match_indices` 追踪真实字节偏移，或让 `split_sentences` 返回 `(text, start_byte, end_byte)` 三元组，chunk 阶段直接使用原始偏移。
+- 改动：重写 `split_paragraphs`/`split_sentences`/`split_words`/`split_chars` 返回 `(text_slice, byte_offset_in_original_text)` 二元组，所有偏移基于原文字节位置。`chunk()` 用 unit 的 `byte_offset` 直接计算 `byte_range`，`chunk_text` 从 `text[start..end]` 提取而非重新 join。新增 3 个测试验证 `text[byte_range] == chunk.text`（含多字节字符和段落场景）。
 
 ### 7.3 向量维度硬编码 512
 
