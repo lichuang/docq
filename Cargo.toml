@@ -38,12 +38,12 @@ dirs = "5"
 toml = "0.8"
 log = "0.4"
 flexi_logger = "0.29"
-docq-core = { path = "crates/docq-core", version = "0.1.0" }
-docq-model = { path = "crates/docq-model", version = "0.1.0" }
-docq-indexer = { path = "crates/docq-indexer", version = "0.1.0" }
-docq-storage = { path = "crates/docq-storage", version = "0.1.0" }
-docq-retrieve = { path = "crates/docq-retrieve", version = "0.1.0" }
-docq-synth = { path = "crates/docq-synth", version = "0.1.0" }
+docq-core = { path = "crates/docq-core", version = "0.2.0" }
+docq-model = { path = "crates/docq-model", version = "0.2.0" }
+docq-indexer = { path = "crates/docq-indexer", version = "0.2.0" }
+docq-storage = { path = "crates/docq-storage", version = "0.2.0" }
+docq-retrieve = { path = "crates/docq-retrieve", version = "0.2.0" }
+docq-synth = { path = "crates/docq-synth", version = "0.2.0" }
 
 # esaxx-rs 0.1.10 unconditionally forces /MT on Windows, which conflicts with
 # other C/C++ dependencies (e.g. llama.cpp) that use /MD. Vendor a patched copy

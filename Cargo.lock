@@ -941,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "docq"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "docq-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "docq-indexer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1000,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "docq-model"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "docq-core",
@@ -1017,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "docq-retrieve"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "docq-core",
@@ -1032,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "docq-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "docq-core",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "docq-synth"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "docq-core",
