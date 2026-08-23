@@ -18,12 +18,16 @@ pub struct IndexStats {
   pub chunks_indexed: usize,
 }
 
-impl IndexStats {
-  pub fn merge(&mut self, other: &IndexStats) {
-    self.files_indexed += other.files_indexed;
-    self.files_skipped += other.files_skipped;
-    self.files_removed += other.files_removed;
-    self.chunks_indexed += other.chunks_indexed;
+impl std::ops::Add for IndexStats {
+  type Output = IndexStats;
+
+  fn add(self, other: IndexStats) -> IndexStats {
+    IndexStats {
+      files_indexed: self.files_indexed + other.files_indexed,
+      files_skipped: self.files_skipped + other.files_skipped,
+      files_removed: self.files_removed + other.files_removed,
+      chunks_indexed: self.chunks_indexed + other.chunks_indexed,
+    }
   }
 }
 

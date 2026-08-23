@@ -113,11 +113,10 @@
 - 文件：`crates/docq-storage/src/sqlite.rs`、`crates/docq-retrieve/src/retriever.rs`
 - 改动：`search_vectors` 在 storage 层直接返回 `1.0 - distance`（similarity），retriever 不再做转换。`test_vector_search` 的断言方向从 `<` 改为 `>`。
 
-### P3-20. `IndexStats::merge` 可用 `Add` trait
+### P3-20. ~~`IndexStats::merge` 可用 `Add` trait~~ ✅ 已完成
 
-- 文件：`crates/docq-indexer/src/lib.rs:56-61`
-- 现状：手动 merge。
-- 修复：实现 `std::ops::Add` 更符合 Rust 惯例。
+- 文件：`crates/docq-indexer/src/indexer.rs`、`crates/docq/src/engine.rs`
+- 改动：`IndexStats::merge(&self, &other)` 改为 `impl std::ops::Add for IndexStats`，调用处 `stats.merge(&s)` 改为 `stats = stats + s`。
 
 ### P3-21. ~~缺少 `Storage` trait 并发测试~~ ✅ 已完成
 

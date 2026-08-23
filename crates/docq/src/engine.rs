@@ -303,7 +303,7 @@ impl Engine {
     let mut stats = IndexStats::default();
     for col in collections {
       let s = self.indexer.index_directory(&col.path).await?;
-      stats.merge(&s);
+      stats = stats + s;
     }
     Ok(stats)
   }
