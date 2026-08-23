@@ -168,6 +168,13 @@
   - **使用场景**：纯 search → 只加载 embedding + reranker；ask → 全量加载含 LLM
 - 备注：属于产品层面优化，config.toml 已支持用户手动配置，此为自动化方向。
 
+### P4-30. 多平台 GPU 加速二进制发布
+
+- 现状：CI 只发布 CPU 版本。macOS 编译时自动启用 Metal，Windows/Linux 用户只能从源码编译启用 Vulkan/CUDA。
+- 目标：为 Windows/Linux 提供预编译的 GPU 加速版本（Vulkan 通用版 + CUDA NVIDIA 专用版）。
+- 难点：CI runner 无 GPU，需要安装 Vulkan SDK / CUDA Toolkit，编译时间长，需要多矩阵 job。
+- 临时方案：README 已说明用户如何 `cargo install --features` 本地编译。
+
 ## 六、已有的其他 todo
 
 - index by multi thread

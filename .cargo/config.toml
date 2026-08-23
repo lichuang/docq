@@ -1,3 +1,7 @@
-[env]
+[target.aarch64-apple-darwin.env]
+GGML_METAL = "ON"
+CMAKE_CXX_FLAGS = "-Wno-elaborated-enum-base"
+
+[target.x86_64-apple-darwin.env]
 GGML_METAL = "ON"
 CMAKE_CXX_FLAGS = "-Wno-elaborated-enum-base"

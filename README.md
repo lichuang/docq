@@ -126,6 +126,28 @@ It is created automatically the first time you run `docq`. You can override it w
 
 The first time you index, search, or ask, `docq` downloads the required local models to `--model-cache` (`~/.cache/docq/models` by default). After that, everything works offline.
 
+## GPU acceleration
+
+The prebuilt binary (`cargo install docq`) uses the CPU backend. On macOS (Apple Silicon), Metal GPU acceleration is enabled automatically during compilation. On Windows and Linux, you can enable GPU acceleration by building from source:
+
+### Vulkan (Windows / Linux — AMD, Intel, NVIDIA)
+
+Install the [Vulkan SDK](https://vulkan.lunarg.com/), then:
+
+```bash
+cargo install docq --features llama-cpp-2/vulkan
+```
+
+### CUDA (Linux / Windows — NVIDIA only)
+
+Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit), then:
+
+```bash
+cargo install docq --features llama-cpp-2/cuda
+```
+
+If no GPU is available at runtime, `docq` automatically falls back to the CPU backend.
+
 ## Status
 
 Early development. The CLI and configuration may change before 1.0.
