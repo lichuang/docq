@@ -217,7 +217,7 @@ impl Retriever {
   /// 6. **Assembly** — build `SearchHit`s with per-stage `ScoreExplain`.
   ///
   /// Score directions in `ScoreExplain` are unified to "higher is better":
-  /// - `bm25_score`: raw FTS5 BM25 score (higher = more relevant)
+  /// - `bm25_score`: negated FTS5 BM25 score (higher = more relevant)
   /// - `vector_score`: similarity score from storage layer (higher = closer)
   /// - `rrf_score`: RRF fused score (higher = better rank)
   /// - `rerank_score` / `final_score`: cross-encoder score (higher = more

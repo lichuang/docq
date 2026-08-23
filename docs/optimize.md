@@ -125,12 +125,9 @@
 - **影响**：调用方无法按错误类型编程式处理（如区分"可重试的下载失败"与"致命配置错误"），限制了未来做重试/熔断。
 - **建议**：为每类补充 1-2 个真实变体（如 `StoreError::Io`、`ModelError::Download`、`LlmError::ContextOverflow`）。
 
-### 7.5 `bm25()` 分数语义注释误导
+### 7.5 `bm25()` 分数语义注释误导 ✅ 已完成
 
-- **位置**：`docq-retrieve/src/retriever.rs:43`、`docq-storage/src/sqlite.rs:339`
-- **现状**：注释声称 `bm25_score` "higher = more relevant"，但 SQLite FTS5 的 `bm25()` 返回**负分**（越相关越接近 0），`rank` 按升序排。
-- **影响**：当前 RRF 只看排名所以不影响正确性，但 `ScoreExplain.bm25_score` 展示成"越高越好"会误导调试。
-- **建议**：统一转成 `-bm25(...)` 或修正注释，让 `ScoreExplain` 的"higher is better"约定真正成立。
+- 改动：`search_text` 中将 FTS5 `bm25()` 返回的负分取反（`-raw`），使 `ScoreExplain.bm25_score` 遵循 "higher is better" 约定。
 
 ### 7.6 `hub.ensure` 无条件写 `model_versions`
 

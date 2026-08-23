@@ -451,9 +451,12 @@ impl Storage for SqliteStorage {
          LIMIT ?2",
       )
       .map_err(map_rusqlite)?;
+    // FTS5 bm25() returns negative scores (0 = best, more negative = worse).
+    // Negate so higher = more relevant, matching the convention of all other channels.
     let rows = stmt
       .query_map(params![query, top_k as i64], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, f32>(1)?))
+        let raw: f32 = r.get(1)?;
+        Ok((r.get::<_, String>(0)?, -raw))
       })
       .map_err(map_rusqlite)?
       .collect::<rusqlite::Result<Vec<_>>>()
