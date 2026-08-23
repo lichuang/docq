@@ -119,11 +119,10 @@
 - 现状：手动 merge。
 - 修复：实现 `std::ops::Add` 更符合 Rust 惯例。
 
-### P3-21. 缺少 `Storage` trait 并发测试
+### P3-21. ~~缺少 `Storage` trait 并发测试~~ ✅ 已完成
 
 - 文件：`crates/docq-storage/src/sqlite.rs`
-- 现状：`Arc<Mutex<Connection>>` 序列化所有操作，但未测试多线程下不死锁/不 panic。library 用户可能并发调 `search`。
-- 修复：加多线程并发读写测试。
+- 改动：新增 `test_concurrent_reads`（8 线程并发读 get_document/get_chunks/search_vectors/search_text/count_chunks）和 `test_concurrent_reads_and_writes`（1 线程写 + 1 线程读同时执行，验证 WAL 模式下读写不互斥）。12/12 测试通过。
 
 ## 五、Ask 性能优化（来自实测 profiling）
 

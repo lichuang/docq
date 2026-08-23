@@ -936,4 +936,87 @@ mod tests {
     );
     assert!(storage.get_chunks(&["c1".to_string()]).unwrap().is_empty());
   }
+
+  #[test]
+  fn test_concurrent_reads() {
+    let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
+    storage.init(512).unwrap();
+
+    let doc = make_doc("doc1.txt", "concurrent read test");
+    let chunk = make_chunk("c1", "doc1.txt", "hello world", 0, 11);
+    commit(&storage, |tx| {
+      tx.add_document(&doc).unwrap();
+      tx.add_chunks(&[chunk]).unwrap();
+      tx.add_chunk_documents(&["c1".to_string()], "doc1.txt").unwrap();
+      tx.add_vectors(&["c1".to_string()], &[vec![0.1_f32; 512]]).unwrap();
+      tx.add_fts_chunks(&["c1".to_string()], &["hello world".to_string()]).unwrap();
+    });
+
+    let handles: Vec<_> = (0..8)
+      .map(|_| {
+        let s = storage.clone();
+        std::thread::spawn(move || {
+          assert!(s.get_document("doc1.txt").unwrap().is_some());
+          assert!(!s.get_chunks(&["c1".to_string()]).unwrap().is_empty());
+          assert!(!s.search_vectors(&vec![0.1_f32; 512], 10).unwrap().is_empty());
+          assert!(!s.search_text("hello", 10).unwrap().is_empty());
+          assert_eq!(s.count_chunks().unwrap(), 1);
+        })
+      })
+      .collect();
+
+    for h in handles {
+      h.join().unwrap();
+    }
+  }
+
+  #[test]
+  fn test_concurrent_reads_and_writes() {
+    let storage = Arc::new(SqliteStorage::open_in_memory().unwrap());
+    storage.init(512).unwrap();
+
+    for i in 0..5 {
+      let doc = make_doc(&format!("doc{i}.txt"), &format!("content {i}"));
+      let chunk = make_chunk(&format!("c{i}"), &format!("doc{i}.txt"), &format!("text {i}"), 0, 6);
+      commit(&storage, |tx| {
+        tx.add_document(&doc).unwrap();
+        tx.add_chunks(&[chunk]).unwrap();
+        tx.add_chunk_documents(&[format!("c{i}")], &format!("doc{i}.txt")).unwrap();
+      });
+    }
+
+    let reader = storage.clone();
+    let read_handle = std::thread::spawn(move || {
+      for _ in 0..50 {
+        let docs = reader.list_documents().unwrap();
+        assert!(docs.len() >= 5);
+        let _ = reader.count_chunks().unwrap();
+      }
+    });
+
+    let writer = storage.clone();
+    let write_handle = std::thread::spawn(move || {
+      for i in 0..5 {
+        let doc = make_doc(&format!("extra{i}.txt"), &format!("extra {i}"));
+        let chunk = make_chunk(
+          &format!("extra_c{i}"),
+          &format!("extra{i}.txt"),
+          &format!("extra {i}"),
+          0,
+          7,
+        );
+        commit(&writer, |tx| {
+          tx.add_document(&doc).unwrap();
+          tx.add_chunks(&[chunk]).unwrap();
+          tx.add_chunk_documents(&[format!("extra_c{i}")], &format!("extra{i}.txt")).unwrap();
+        });
+      }
+    });
+
+    read_handle.join().unwrap();
+    write_handle.join().unwrap();
+
+    let final_count = storage.list_documents().unwrap().len();
+    assert_eq!(final_count, 10);
+  }
 }
