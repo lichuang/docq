@@ -159,6 +159,15 @@
 - 文件：`~/.config/docq/config.toml`
 - 改动：reranker 从 `BAAI/bge-reranker-base` 换为 `jinaai/jina-reranker-v1-turbo-en`。rerank 从 3144ms → 731ms（4.3 倍），ask 总耗时从 11.9s → 6.5s。回答质量可接受。
 
+### P4-29. 智能模型选择策略
+
+- 现状：所有模型在 config.toml 中手动配置，新用户默认用一套固定配置，不区分语言和硬件。
+- 目标：根据用户环境自动推荐/选择模型组合：
+  - **文档语言**：中文文档 → BGE reranker（多语言）+ BGE-zh embedding；英文文档 → jina-turbo reranker + BGE-en embedding
+  - **硬件配置**：8GB RAM → Qwen2.5-0.5B（~0.5GB）；16GB → Qwen2.5-3B（~1.9GB）；有 Metal/CUDA → 可用更大模型
+  - **使用场景**：纯 search → 只加载 embedding + reranker；ask → 全量加载含 LLM
+- 备注：属于产品层面优化，config.toml 已支持用户手动配置，此为自动化方向。
+
 ## 六、已有的其他 todo
 
 - index by multi thread
