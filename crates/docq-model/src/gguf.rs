@@ -11,6 +11,23 @@ use llama_cpp_2::sampling::LlamaSampler;
 
 use crate::ModelHub;
 
+unsafe extern "C" {
+  fn ggml_log_set(
+    callback: Option<
+      unsafe extern "C" fn(level: i32, text: *const std::os::raw::c_char, user_data: *mut std::os::raw::c_void),
+    >,
+    user_data: *mut std::os::raw::c_void,
+  );
+}
+
+unsafe extern "C" fn void_log(_level: i32, _text: *const std::os::raw::c_char, _user_data: *mut std::os::raw::c_void) {}
+
+fn silence_ggml_logs() {
+  unsafe {
+    ggml_log_set(Some(void_log), std::ptr::null_mut());
+  }
+}
+
 pub struct GgufLlm {
   backend: LlamaBackend,
   model: LlamaModel,
@@ -22,6 +39,7 @@ impl GgufLlm {
   pub async fn from_model_hub(hub: &ModelHub, spec: &ModelSpec, config: &LlmConfig) -> Result<Self> {
     let path = hub.resolve(spec).await?;
 
+    silence_ggml_logs();
     let mut backend = LlamaBackend::init().map_err(|e| LlmError::BackendInit(e.to_string()))?;
     backend.void_logs();
     let model_params = LlamaModelParams::default();
@@ -40,6 +58,7 @@ impl GgufLlm {
   pub fn from_model_hub_sync(hub: &ModelHub, spec: &ModelSpec, config: &LlmConfig) -> Result<Self> {
     let path = hub.resolve_sync(spec)?;
 
+    silence_ggml_logs();
     let mut backend = LlamaBackend::init().map_err(|e| LlmError::BackendInit(e.to_string()))?;
     backend.void_logs();
     let model_params = LlamaModelParams::default();
