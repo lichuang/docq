@@ -308,21 +308,24 @@ impl Indexer {
     }))
   }
 
-  /// Embed all chunks in `pending` in one batch, then write each file
-  /// to storage in its own transaction.
+  /// Embed all chunks in `pending` in one batch, then write to storage
+  /// in groups of `TX_BATCH_SIZE` files per transaction.
   async fn flush_batch(&self, pending: &mut Vec<PendingFile>) -> Result<IndexStats> {
+    const TX_BATCH_SIZE: usize = 5;
+
     let all_texts: Vec<String> = pending.iter().flat_map(|f| f.chunk_texts.iter().cloned()).collect();
     let all_embeddings = self.embedder.embed(&all_texts).await?;
 
     let mut stats = IndexStats::default();
     let mut offset = 0usize;
+    let mut tx_count = 0usize;
+    let mut tx = self.storage.begin_tx()?;
 
     for pf in pending.drain(..) {
       let n = pf.chunks.len();
       let embeddings: Vec<Vec<f32>> = all_embeddings[offset..offset + n].to_vec();
       let chunk_ids: Vec<String> = pf.chunks.iter().map(|c| c.id.clone()).collect();
 
-      let mut tx = self.storage.begin_tx()?;
       if pf.is_update {
         tx.delete_chunks_by_doc(&pf.doc.id)?;
       }
@@ -332,11 +335,21 @@ impl Indexer {
       tx.add_chunk_documents(&chunk_ids, &pf.doc.id)?;
       tx.add_vectors(&chunk_ids, &embeddings)?;
       tx.add_fts_chunks(&chunk_ids, &pf.tokenized_texts)?;
-      tx.commit()?;
 
       stats.files_indexed += 1;
       stats.chunks_indexed += n;
       offset += n;
+      tx_count += 1;
+
+      if tx_count >= TX_BATCH_SIZE {
+        tx.commit()?;
+        tx = self.storage.begin_tx()?;
+        tx_count = 0;
+      }
+    }
+
+    if tx_count > 0 {
+      tx.commit()?;
     }
 
     Ok(stats)

@@ -12,7 +12,7 @@
 |---|---|---|
 | `ReaderRegistry::read_dir` 把所有文件内容先收集到 `Vec<DocumentSource>` | 大目录内存峰值高，chunk/embedding 阶段被阻塞 | 改成流式：边 WalkDir 边读取、分块、向量化 ✅ |
 | 每个文件都同步查一次 `storage.get_document(&doc_id)` 做去重 | N+1 查询，串行访问 Storage | 批量读一个 collection 下所有 `(doc_id, content_hash)`，一次判断是否需要跳过 |
-| `flush_batch` 虽然把 embedding 批处理了 500 个 chunk，但写库时仍是**每个文件一个事务** | 抵消 batch 收益，fsync 次数多 | 整个 pending batch 用**一个事务**写入：documents → chunks → vectors → fts（已搁置 — 单文件失败会回滚整个 batch） |
+| `flush_batch` 虽然把 embedding 批处理了 500 个 chunk，但写库时仍是**每个文件一个事务** | 抵消 batch 收益，fsync 次数多 | 每 N 个文件用一个事务写入，减少 fsync 次数 ✅ |
 | `index_directory` 是 plain `for` 循环处理文件 | CPU 分词和 I/O 没重叠 | 用 `tokio::task::spawn_blocking` 或 rayon 做读取+分块，通过有界 channel 喂给 embedding 阶段 ✅ |
 | `SentenceSplitter` 里 `token_count()` 对每个句子/单元反复调用 tokenizer | 分块阶段 CPU 占用高 | 只 tokenize 一次，用 token span 驱动切分，或缓存每个单元的 token count |
 | `sha256_hex` 逐字节 `format!` 分配字符串 | 大文件哈希格式化有额外开销 | 用固定 hex 表 + 预分配 `String` 单次写入 |
