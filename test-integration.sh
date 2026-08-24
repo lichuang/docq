@@ -4,9 +4,9 @@ set -euo pipefail
 # docq integration test script
 # Usage: cargo build && ./test-integration.sh
 #
-# Runs against an isolated temporary workspace, so the user's own
-# ~/.config/docq data is never touched. Models are read from the shared
-# model cache; the first run downloads them.
+# Runs against a temporary workspace so the user's live workspace
+# is never deleted. Global config isolation is tracked in #5.
+# Models are read from the shared model cache; the first run downloads them.
 
 DOCQ=./target/debug/docq
 
