@@ -139,10 +139,11 @@ impl Retriever {
         let rerank_map: HashMap<String, f32> = scored.into_iter().map(|sc| (sc.chunk.id, sc.score)).collect();
 
         let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.rerank_top_n).collect();
-        sorted.sort_by(|a, b| {
-          let ra = rerank_map.get(&a.0).copied().unwrap_or(0.0);
-          let rb = rerank_map.get(&b.0).copied().unwrap_or(0.0);
-          rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+        sorted.sort_by(|a, b| match (rerank_map.get(&a.0), rerank_map.get(&b.0)) {
+          (Some(ra), Some(rb)) => rb.total_cmp(ra),
+          (Some(_), None) => std::cmp::Ordering::Less,
+          (None, Some(_)) => std::cmp::Ordering::Greater,
+          (None, None) => std::cmp::Ordering::Equal,
         });
 
         Ok((chunk_map, rerank_map, sorted))
@@ -413,6 +414,15 @@ mod tests {
     }
   }
 
+  struct PartialNegativeReranker;
+
+  #[async_trait::async_trait]
+  impl Reranker for PartialNegativeReranker {
+    async fn rerank(&self, _query: &str, chunks: &[Chunk]) -> Result<Vec<ScoredChunk>> {
+      Ok(chunks.first().cloned().map(|chunk| ScoredChunk { chunk, score: -1.0 }).into_iter().collect())
+    }
+  }
+
   fn test_retriever_with_reranker(storage: &Arc<SqliteStorage>) -> Retriever {
     Retriever::new(RetrieverConfig {
       storage: storage.clone(),
@@ -523,5 +533,28 @@ mod tests {
       assert_eq!(hit.score, hit.explain.final_score);
       assert_eq!(hit.score, hit.explain.rerank_score.unwrap());
     }
+  }
+
+  #[tokio::test]
+  async fn test_scored_candidates_sort_before_missing_rerank_scores() {
+    let storage = Arc::new(test_storage());
+    seed_index(&storage, &[("a.txt", "共识算法"), ("b.txt", "分布式系统")]).await;
+
+    let retriever = Retriever::new(RetrieverConfig {
+      storage: storage.clone(),
+      embedder: Arc::new(StubEmbedder { dim: 512 }),
+      segmenter: Arc::new(JiebaSegmenter),
+      reranker: Some(Arc::new(PartialNegativeReranker)),
+      bm25_top_k: 100,
+      vector_top_k: 100,
+      rrf_k: 60,
+      rerank_top_n: 20,
+      verbose: Verbose(false),
+    });
+
+    let hits = retriever.search("共识算法", 2).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].explain.rerank_score, Some(-1.0));
+    assert!(hits[1].explain.rerank_score.is_none());
   }
 }
