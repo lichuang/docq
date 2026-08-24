@@ -382,18 +382,23 @@ mod tests {
     s
   }
 
-  fn test_retriever(storage: &Arc<SqliteStorage>) -> Retriever {
-    Retriever::new(RetrieverConfig {
+  /// Base config shared by all retriever tests; only the reranker varies.
+  fn test_retriever_config(storage: &Arc<SqliteStorage>, reranker: Option<Arc<dyn Reranker>>) -> RetrieverConfig {
+    RetrieverConfig {
       storage: storage.clone(),
       embedder: Arc::new(StubEmbedder { dim: 512 }),
       segmenter: Arc::new(JiebaSegmenter),
-      reranker: None,
+      reranker,
       bm25_top_k: 100,
       vector_top_k: 100,
       rrf_k: 60,
       rerank_top_n: 20,
       verbose: Verbose(false),
-    })
+    }
+  }
+
+  fn test_retriever(storage: &Arc<SqliteStorage>) -> Retriever {
+    Retriever::new(test_retriever_config(storage, None))
   }
 
   struct StubReranker;
@@ -424,17 +429,7 @@ mod tests {
   }
 
   fn test_retriever_with_reranker(storage: &Arc<SqliteStorage>) -> Retriever {
-    Retriever::new(RetrieverConfig {
-      storage: storage.clone(),
-      embedder: Arc::new(StubEmbedder { dim: 512 }),
-      segmenter: Arc::new(JiebaSegmenter),
-      reranker: Some(Arc::new(StubReranker)),
-      bm25_top_k: 100,
-      vector_top_k: 100,
-      rrf_k: 60,
-      rerank_top_n: 20,
-      verbose: Verbose(false),
-    })
+    Retriever::new(test_retriever_config(storage, Some(Arc::new(StubReranker))))
   }
 
   #[tokio::test]
@@ -544,17 +539,8 @@ mod tests {
     )
     .await;
 
-    let retriever = Retriever::new(RetrieverConfig {
-      storage: storage.clone(),
-      embedder: Arc::new(StubEmbedder { dim: 512 }),
-      segmenter: Arc::new(JiebaSegmenter),
-      reranker: Some(Arc::new(PartialNegativeReranker)),
-      bm25_top_k: 100,
-      vector_top_k: 100,
-      rrf_k: 60,
-      rerank_top_n: 20,
-      verbose: Verbose(false),
-    });
+    let reranker = Some(Arc::new(PartialNegativeReranker) as Arc<dyn Reranker>);
+    let retriever = Retriever::new(test_retriever_config(&storage, reranker));
 
     let hits = retriever.search("consensus", 2).await.unwrap();
     assert_eq!(hits.len(), 2);
@@ -577,17 +563,8 @@ mod tests {
     )
     .await;
 
-    let retriever = Retriever::new(RetrieverConfig {
-      storage: storage.clone(),
-      embedder: Arc::new(StubEmbedder { dim: 512 }),
-      segmenter: Arc::new(JiebaSegmenter),
-      reranker: Some(Arc::new(PartialNegativeReranker)),
-      bm25_top_k: 100,
-      vector_top_k: 100,
-      rrf_k: 60,
-      rerank_top_n: 20,
-      verbose: Verbose(false),
-    });
+    let reranker = Some(Arc::new(PartialNegativeReranker) as Arc<dyn Reranker>);
+    let retriever = Retriever::new(test_retriever_config(&storage, reranker));
     let bm25 = retriever.bm25_recall("consensus").await.unwrap();
     assert_eq!(bm25.len(), 3, "bm25 should recall all three chunks");
 
@@ -597,26 +574,18 @@ mod tests {
     };
 
     // Fixed RRF order A > B > C with strictly decreasing fused scores.
-    let fused = vec![
-      (id_by_text["consensus alpha"].clone(), 0.03),
-      (id_by_text["consensus beta"].clone(), 0.02),
-      (id_by_text["consensus gamma"].clone(), 0.01),
-    ];
+    let id_a = id_by_text["consensus alpha"].clone();
+    let id_b = id_by_text["consensus beta"].clone();
+    let id_c = id_by_text["consensus gamma"].clone();
+    let fused = vec![(id_a.clone(), 0.03), (id_b.clone(), 0.02), (id_c.clone(), 0.01)];
 
     let (_, rerank_map, ordered) = retriever.prepare_candidates("consensus", fused, 3).await.unwrap();
 
     // The reranker only scored the first candidate; B and C keep their RRF
     // relative order behind it.
     assert_eq!(rerank_map.len(), 1);
-    assert_eq!(rerank_map[&id_by_text["consensus alpha"]], -1.0);
+    assert_eq!(rerank_map[&id_a], -1.0);
     let ordered_ids: Vec<String> = ordered.into_iter().map(|(id, _)| id).collect();
-    assert_eq!(
-      ordered_ids,
-      vec![
-        id_by_text["consensus alpha"].clone(),
-        id_by_text["consensus beta"].clone(),
-        id_by_text["consensus gamma"].clone(),
-      ]
-    );
+    assert_eq!(ordered_ids, vec![id_a, id_b, id_c]);
   }
 }
