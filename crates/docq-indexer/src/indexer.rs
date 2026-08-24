@@ -139,14 +139,14 @@ impl Indexer {
   }
 
   pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
-    let docs = self.readers.read_dir(path, true)?;
-    let total = docs.len();
+    let file_paths = self.readers.list_files(path, true)?;
+    let total = file_paths.len();
     let mut stats = IndexStats::default();
     let mut pending: Vec<PendingFile> = Vec::new();
     let mut pending_chunk_count = 0usize;
 
     let current_doc_ids: std::collections::HashSet<String> =
-      docs.iter().map(|d| sha256_hex(&d.path.to_string_lossy())).collect();
+      file_paths.iter().map(|p| sha256_hex(&p.to_string_lossy())).collect();
 
     let all_docs = self.storage.list_documents()?;
     stats.files_removed = self.sweep_deleted(path, &current_doc_ids, &all_docs)?;
@@ -158,14 +158,22 @@ impl Indexer {
       self.verbose.log("indexing config or embedding model changed — forcing full re-index");
     }
 
-    for (i, doc_src) in docs.iter().enumerate() {
+    for (i, file_path) in file_paths.iter().enumerate() {
       self.verbose.log(&format!(
         "chunking file {}/{} ({:.0}%): {}",
         i + 1,
         total,
         (i + 1) as f32 / total.max(1) as f32 * 100.0,
-        doc_src.path.display()
+        file_path.display()
       ));
+
+      let doc_src = match self.readers.read_file(file_path)? {
+        Some(doc) => doc,
+        None => {
+          stats.files_skipped += 1;
+          continue;
+        }
+      };
 
       match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map, force_reindex)? {
         Some(pf) => {

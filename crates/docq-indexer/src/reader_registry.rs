@@ -64,16 +64,16 @@ impl ReaderRegistry {
     reader.read(path)
   }
 
-  /// Walk a directory, dispatch each file to the registered reader that
-  /// handles its extension, and collect all `DocumentSource`s.
-  pub fn read_dir(&self, path: &Path, recursive: bool) -> Result<Vec<docq_core::DocumentSource>> {
-    let mut docs = Vec::new();
+  /// Walk a directory and yield file paths that have a registered reader.
+  /// Does NOT read file contents — caller reads on demand.
+  pub fn list_files(&self, path: &Path, recursive: bool) -> Result<Vec<std::path::PathBuf>> {
     let walker = if recursive {
       WalkDir::new(path)
     } else {
       WalkDir::new(path).max_depth(1)
     };
 
+    let mut paths = Vec::new();
     for entry in walker.into_iter().filter_entry(|e| e.depth() == 0 || !self.is_ignored(e.path())) {
       let entry = match entry {
         Ok(e) => e,
@@ -82,12 +82,19 @@ impl ReaderRegistry {
       if !entry.file_type().is_file() {
         continue;
       }
-      let p = entry.path();
-      let reader = match self.find_reader(p) {
-        Some(r) => r,
-        None => continue,
-      };
-      if let Some(doc) = reader.read(p)? {
+      if self.find_reader(entry.path()).is_some() {
+        paths.push(entry.path().to_path_buf());
+      }
+    }
+    Ok(paths)
+  }
+
+  /// Walk a directory, dispatch each file to the registered reader that
+  /// handles its extension, and collect all `DocumentSource`s.
+  pub fn read_dir(&self, path: &Path, recursive: bool) -> Result<Vec<docq_core::DocumentSource>> {
+    let mut docs = Vec::new();
+    for p in self.list_files(path, recursive)? {
+      if let Some(doc) = self.read_file(&p)? {
         docs.push(doc);
       }
     }
