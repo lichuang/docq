@@ -68,8 +68,8 @@
 | 问题 | 影响 | 优化思路 |
 |---|---|---|
 | `SqliteStorage` 是全局 `Arc<Mutex<Connection>>` | 读写全串行 | 用连接池（r2d2+rusqlite），读并发，写单独一个连接 |
-| 没设 SQLite 性能 pragmas | 默认 rollback journal 写放大严重 | `PRAGMA journal_mode=WAL`、`synchronous=NORMAL`、`cache_size`、可能 `mmap_size` |
-| `chunks(doc_id)` 没建索引 | 删除文档时全表扫描 | `CREATE INDEX idx_chunks_doc_id ON chunks(doc_id)` |
+| 没设 SQLite 性能 pragmas | 默认 rollback journal 写放大严重 | `PRAGMA journal_mode=WAL`、`synchronous=NORMAL`、`cache_size`、可能 `mmap_size` ✅ |
+| `chunks(doc_id)` 没建索引 | 删除文档时全表扫描 | `CREATE INDEX idx_chunk_documents_doc_id ON chunk_documents(doc_id)` ✅ |
 | embedding 序列化逐 float `extend_from_slice` | 函数调用+拷贝开销 | 用 `bytemuck` 或 `unsafe { from_raw_parts }` 一次 memcpy |
 | 每次 SQL 都重新 prepare statement | 热路径解析开销 | 用 `CachedStatement` 或持久化 prepared statements |
 | `status` 用 `list_documents().len()` 计数 | 随文档数线性增长 | 加 `SELECT COUNT(*)` |

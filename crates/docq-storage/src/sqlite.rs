@@ -44,7 +44,13 @@ impl SqliteStorage {
     ensure_vec_extension();
     let conn = Connection::open(path).map_err(map_rusqlite)?;
     conn
-      .execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")
+      .execute_batch(
+        "PRAGMA busy_timeout = 5000; \
+         PRAGMA foreign_keys = ON; \
+         PRAGMA journal_mode = WAL; \
+         PRAGMA synchronous = NORMAL; \
+         PRAGMA cache_size = -64000;",
+      )
       .map_err(map_rusqlite)?;
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
@@ -54,7 +60,14 @@ impl SqliteStorage {
   pub fn open_in_memory() -> Result<Self> {
     ensure_vec_extension();
     let conn = Connection::open_in_memory().map_err(map_rusqlite)?;
-    conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;").map_err(map_rusqlite)?;
+    conn
+      .execute_batch(
+        "PRAGMA busy_timeout = 5000; \
+       PRAGMA foreign_keys = ON; \
+       PRAGMA synchronous = NORMAL; \
+       PRAGMA cache_size = -64000;",
+      )
+      .map_err(map_rusqlite)?;
     Ok(Self {
       conn: Arc::new(Mutex::new(conn)),
     })
@@ -278,7 +291,8 @@ impl Storage for SqliteStorage {
         CREATE TABLE IF NOT EXISTS meta (
           key   TEXT PRIMARY KEY,
           value TEXT NOT NULL
-        );",
+        );
+        CREATE INDEX IF NOT EXISTS idx_chunk_documents_doc_id ON chunk_documents(doc_id);",
       )
       .map_err(map_rusqlite)?;
     if vector_dimension == 0 {
