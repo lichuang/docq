@@ -989,6 +989,7 @@ dependencies = [
  "lopdf",
  "pdf-extract",
  "quick-xml",
+ "rayon",
  "sha2",
  "tempfile",
  "thiserror 1.0.69",

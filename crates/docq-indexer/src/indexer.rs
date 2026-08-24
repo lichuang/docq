@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use docq_core::{Chunk, Chunker, Document, Embedder, ModelRole, ModelSpec, Result, Storage, Verbose, WordSegmenter};
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
 use crate::ReaderRegistry;
@@ -141,56 +142,66 @@ impl Indexer {
   pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
     let file_paths = self.readers.list_files(path, true)?;
     let total = file_paths.len();
-    let mut stats = IndexStats::default();
-    let mut pending: Vec<PendingFile> = Vec::new();
-    let mut pending_chunk_count = 0usize;
 
     let current_doc_ids: std::collections::HashSet<String> =
       file_paths.iter().map(|p| sha256_hex(&p.to_string_lossy())).collect();
 
     let all_docs = self.storage.list_documents()?;
-    stats.files_removed = self.sweep_deleted(path, &current_doc_ids, &all_docs)?;
+    let mut stats = IndexStats {
+      files_removed: self.sweep_deleted(path, &current_doc_ids, &all_docs)?,
+      ..Default::default()
+    };
 
-    let existing_map: HashMap<String, Document> = all_docs.into_iter().map(|d| (d.id.clone(), d)).collect();
+    let existing_map: Arc<HashMap<String, Document>> =
+      Arc::new(all_docs.into_iter().map(|d| (d.id.clone(), d)).collect());
 
     let force_reindex = self.needs_reindex()?;
     if force_reindex {
       self.verbose.log("indexing config or embedding model changed — forcing full re-index");
     }
 
-    for (i, file_path) in file_paths.iter().enumerate() {
-      self.verbose.log(&format!(
-        "chunking file {}/{} ({:.0}%): {}",
-        i + 1,
-        total,
-        (i + 1) as f32 / total.max(1) as f32 * 100.0,
-        file_path.display()
-      ));
+    let existing_map = existing_map.clone();
 
-      let doc_src = match self.readers.read_file(file_path)? {
-        Some(doc) => doc,
-        None => {
-          stats.files_skipped += 1;
-          continue;
+    let prepared: Vec<Option<PendingFile>> = file_paths
+      .par_iter()
+      .enumerate()
+      .map(|(i, file_path)| {
+        if i % 10 == 0 {
+          self.verbose.log(&format!(
+            "chunking file {}/{} ({:.0}%): {}",
+            i + 1,
+            total,
+            (i + 1) as f32 / total.max(1) as f32 * 100.0,
+            file_path.display()
+          ));
         }
-      };
 
-      match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map, force_reindex)? {
-        Some(pf) => {
-          pending_chunk_count += pf.chunks.len();
-          pending.push(pf);
-          if pending_chunk_count >= EMBED_BATCH_SIZE {
-            let s = self.flush_batch(&mut pending).await?;
-            stats.files_indexed += s.files_indexed;
-            stats.chunks_indexed += s.chunks_indexed;
-            pending_chunk_count = 0;
-          }
-        }
-        None => {
-          stats.files_skipped += 1;
-        }
+        let doc_src = match self.readers.read_file(file_path) {
+          Ok(Some(doc)) => doc,
+          Ok(None) => return Ok(None),
+          Err(e) => return Err(e),
+        };
+
+        self.prepare_file(&doc_src.path, &doc_src.content, &existing_map, force_reindex)
+      })
+      .collect::<Result<Vec<_>>>()?;
+
+    let mut pending: Vec<PendingFile> = Vec::new();
+    let mut pending_chunk_count = 0usize;
+
+    for pf in prepared.into_iter().flatten() {
+      pending_chunk_count += pf.chunks.len();
+      pending.push(pf);
+      if pending_chunk_count >= EMBED_BATCH_SIZE {
+        let s = self.flush_batch(&mut pending).await?;
+        stats.files_indexed += s.files_indexed;
+        stats.chunks_indexed += s.chunks_indexed;
+        pending_chunk_count = 0;
       }
     }
+
+    let skipped = total - stats.files_indexed - pending.len();
+    stats.files_skipped = skipped;
 
     if !pending.is_empty() {
       let s = self.flush_batch(&mut pending).await?;
