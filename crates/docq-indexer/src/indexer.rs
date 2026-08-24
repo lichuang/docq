@@ -36,7 +36,13 @@ fn sha256_hex(s: &str) -> String {
   let mut hasher = Sha256::new();
   hasher.update(s.as_bytes());
   let hash = hasher.finalize();
-  hash.iter().map(|b| format!("{b:02x}")).collect()
+  const HEX: &[u8; 16] = b"0123456789abcdef";
+  let mut out = String::with_capacity(64);
+  for b in hash {
+    out.push(HEX[(b >> 4) as usize] as char);
+    out.push(HEX[(b & 0xf) as usize] as char);
+  }
+  out
 }
 
 pub struct IndexerConfig {

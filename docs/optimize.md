@@ -15,7 +15,7 @@
 | `flush_batch` 虽然把 embedding 批处理了 500 个 chunk，但写库时仍是**每个文件一个事务** | 抵消 batch 收益，fsync 次数多 | 每 N 个文件用一个事务写入，减少 fsync 次数 ✅ |
 | `index_directory` 是 plain `for` 循环处理文件 | CPU 分词和 I/O 没重叠 | 用 `tokio::task::spawn_blocking` 或 rayon 做读取+分块，通过有界 channel 喂给 embedding 阶段 ✅ |
 | `SentenceSplitter` 里 `token_count()` 对每个句子/单元反复调用 tokenizer | 分块阶段 CPU 占用高 | 只 tokenize 一次，用 token span 驱动切分，或缓存每个单元的 token count |
-| `sha256_hex` 逐字节 `format!` 分配字符串 | 大文件哈希格式化有额外开销 | 用固定 hex 表 + 预分配 `String` 单次写入 |
+| `sha256_hex` 逐字节 `format!` 分配字符串 | 大文件哈希格式化有额外开销 | 用固定 hex 表 + 预分配 `String` 单次写入 ✅ |
 | `index_file` 总是只 batch 一个文件 | 单文件 API 无法均摊 embedding/存储开销 | 提供公开 batched API，或让 `index_file` 内部保留跨调用缓冲 |
 
 **快速 win**：把 batch 写入合并成单事务 + SQLite WAL 模式，这两行改动能明显提升大批量索引吞吐。
