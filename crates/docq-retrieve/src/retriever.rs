@@ -538,7 +538,11 @@ mod tests {
   #[tokio::test]
   async fn test_scored_candidates_sort_before_missing_rerank_scores() {
     let storage = Arc::new(test_storage());
-    seed_index(&storage, &[("a.txt", "共识算法"), ("b.txt", "分布式系统")]).await;
+    seed_index(
+      &storage,
+      &[("a.txt", "consensus algorithm"), ("b.txt", "distributed system")],
+    )
+    .await;
 
     let retriever = Retriever::new(RetrieverConfig {
       storage: storage.clone(),
@@ -552,7 +556,7 @@ mod tests {
       verbose: Verbose(false),
     });
 
-    let hits = retriever.search("共识算法", 2).await.unwrap();
+    let hits = retriever.search("consensus", 2).await.unwrap();
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].explain.rerank_score, Some(-1.0));
     assert!(hits[1].explain.rerank_score.is_none());
@@ -566,9 +570,9 @@ mod tests {
     seed_index(
       &storage,
       &[
-        ("a.txt", "共识算法甲"),
-        ("b.txt", "共识算法乙"),
-        ("c.txt", "共识算法丙"),
+        ("a.txt", "consensus alpha"),
+        ("b.txt", "consensus beta"),
+        ("c.txt", "consensus gamma"),
       ],
     )
     .await;
@@ -584,7 +588,7 @@ mod tests {
       rerank_top_n: 20,
       verbose: Verbose(false),
     });
-    let bm25 = retriever.bm25_recall("共识算法").await.unwrap();
+    let bm25 = retriever.bm25_recall("consensus").await.unwrap();
     assert_eq!(bm25.len(), 3, "bm25 should recall all three chunks");
 
     let id_by_text: HashMap<String, String> = {
@@ -594,24 +598,24 @@ mod tests {
 
     // Fixed RRF order A > B > C with strictly decreasing fused scores.
     let fused = vec![
-      (id_by_text["共识算法甲"].clone(), 0.03),
-      (id_by_text["共识算法乙"].clone(), 0.02),
-      (id_by_text["共识算法丙"].clone(), 0.01),
+      (id_by_text["consensus alpha"].clone(), 0.03),
+      (id_by_text["consensus beta"].clone(), 0.02),
+      (id_by_text["consensus gamma"].clone(), 0.01),
     ];
 
-    let (_, rerank_map, ordered) = retriever.prepare_candidates("共识算法", fused, 3).await.unwrap();
+    let (_, rerank_map, ordered) = retriever.prepare_candidates("consensus", fused, 3).await.unwrap();
 
     // The reranker only scored the first candidate; B and C keep their RRF
     // relative order behind it.
     assert_eq!(rerank_map.len(), 1);
-    assert_eq!(rerank_map[&id_by_text["共识算法甲"]], -1.0);
+    assert_eq!(rerank_map[&id_by_text["consensus alpha"]], -1.0);
     let ordered_ids: Vec<String> = ordered.into_iter().map(|(id, _)| id).collect();
     assert_eq!(
       ordered_ids,
       vec![
-        id_by_text["共识算法甲"].clone(),
-        id_by_text["共识算法乙"].clone(),
-        id_by_text["共识算法丙"].clone(),
+        id_by_text["consensus alpha"].clone(),
+        id_by_text["consensus beta"].clone(),
+        id_by_text["consensus gamma"].clone(),
       ]
     );
   }
