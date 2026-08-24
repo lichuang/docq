@@ -2,34 +2,41 @@
 set -euo pipefail
 
 # docq integration test script
-# Usage: ./test-integration.sh
+# Usage: cargo build && ./test-integration.sh
+#
+# Runs against an isolated temporary workspace, so the user's own
+# ~/.config/docq data is never touched. Models are read from the shared
+# model cache; the first run downloads them.
 
 DOCQ=./target/debug/docq
-WORKSPACE="$HOME/.config/docq"
+
+if [[ ! -x "$DOCQ" ]]; then
+  echo "error: $DOCQ not found. Run 'cargo build' first." >&2
+  exit 1
+fi
+
+WORKSPACE="$(mktemp -d)"
+trap 'rm -rf "$WORKSPACE"' EXIT
 
 GREEN='\033[0;32m'
 RESET='\033[0m'
 
-echo -e "\n${GREEN}=== Clean workspace ===${RESET}"
-rm -rf "$WORKSPACE"
-mkdir -p "$WORKSPACE"
-
-echo -e "\n${GREEN}=== Init ===${RESET}"
-"$DOCQ" init
+echo -e "\n${GREEN}=== Init (workspace: $WORKSPACE) ===${RESET}"
+"$DOCQ" --workspace "$WORKSPACE" init
 
 echo -e "\n${GREEN}=== Add collection ===${RESET}"
-"$DOCQ" add ./testdata/md --name notes
+"$DOCQ" --workspace "$WORKSPACE" add ./testdata/md --name notes
 
 echo -e "\n${GREEN}=== Index ===${RESET}"
-"$DOCQ" index -v --log-stdout
+"$DOCQ" --workspace "$WORKSPACE" index -v --log-stdout
 
 echo -e "\n${GREEN}=== Ask ===${RESET}"
-"$DOCQ" ask "What are the improvements of Multi-Paxos over the Paxos algorithm?" -vv
+"$DOCQ" --workspace "$WORKSPACE" ask "What are the improvements of Multi-Paxos over the Paxos algorithm?" -vv
 
 echo -e "\n${GREEN}=== Search ===${RESET}"
-"$DOCQ" search "Multi-Paxos" --explain
+"$DOCQ" --workspace "$WORKSPACE" search "Multi-Paxos" --explain
 
 echo -e "\n${GREEN}=== Status ===${RESET}"
-"$DOCQ" status
+"$DOCQ" --workspace "$WORKSPACE" status
 
 echo -e "\n${GREEN}=== Done ===${RESET}"
