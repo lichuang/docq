@@ -1,5 +1,6 @@
 //! Hybrid retrieval: BM25 + vector recall fused via Reciprocal Rank Fusion.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,6 +47,22 @@ struct ScoreMaps<'a> {
   vector: &'a HashMap<String, f32>,
   rrf: &'a HashMap<String, f32>,
   rerank: &'a HashMap<String, f32>,
+}
+
+/// Order two candidates by reranker score.
+///
+/// A scored candidate sorts before an unscored one: a missing score is not a
+/// `0.0` score. Scored candidates sort by descending score, so negative
+/// cross-encoder scores stay below positive ones but above missing ones.
+/// Unscored candidates compare equal; the stable sort then keeps their fused
+/// (RRF) order.
+fn compare_rerank_scores(a: Option<&f32>, b: Option<&f32>) -> Ordering {
+  match (a, b) {
+    (Some(a), Some(b)) => b.total_cmp(a),
+    (Some(_), None) => Ordering::Less,
+    (None, Some(_)) => Ordering::Greater,
+    (None, None) => Ordering::Equal,
+  }
 }
 
 impl Retriever {
@@ -139,12 +156,7 @@ impl Retriever {
         let rerank_map: HashMap<String, f32> = scored.into_iter().map(|sc| (sc.chunk.id, sc.score)).collect();
 
         let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.rerank_top_n).collect();
-        sorted.sort_by(|a, b| match (rerank_map.get(&a.0), rerank_map.get(&b.0)) {
-          (Some(ra), Some(rb)) => rb.total_cmp(ra),
-          (Some(_), None) => std::cmp::Ordering::Less,
-          (None, Some(_)) => std::cmp::Ordering::Greater,
-          (None, None) => std::cmp::Ordering::Equal,
-        });
+        sorted.sort_by(|a, b| compare_rerank_scores(rerank_map.get(&a.0), rerank_map.get(&b.0)));
 
         Ok((chunk_map, rerank_map, sorted))
       }
