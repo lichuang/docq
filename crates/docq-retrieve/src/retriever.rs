@@ -556,5 +556,63 @@ mod tests {
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].explain.rerank_score, Some(-1.0));
     assert!(hits[1].explain.rerank_score.is_none());
+    // Unscored candidates fall back to the RRF score as their final score.
+    assert_eq!(hits[1].score, hits[1].explain.rrf_score.unwrap());
+  }
+
+  #[tokio::test]
+  async fn test_prepare_candidates_keeps_rrf_order_for_unscored() {
+    let storage = Arc::new(test_storage());
+    seed_index(
+      &storage,
+      &[
+        ("a.txt", "共识算法甲"),
+        ("b.txt", "共识算法乙"),
+        ("c.txt", "共识算法丙"),
+      ],
+    )
+    .await;
+
+    let retriever = Retriever::new(RetrieverConfig {
+      storage: storage.clone(),
+      embedder: Arc::new(StubEmbedder { dim: 512 }),
+      segmenter: Arc::new(JiebaSegmenter),
+      reranker: Some(Arc::new(PartialNegativeReranker)),
+      bm25_top_k: 100,
+      vector_top_k: 100,
+      rrf_k: 60,
+      rerank_top_n: 20,
+      verbose: Verbose(false),
+    });
+    let bm25 = retriever.bm25_recall("共识算法").await.unwrap();
+    assert_eq!(bm25.len(), 3, "bm25 should recall all three chunks");
+
+    let id_by_text: HashMap<String, String> = {
+      let ids: Vec<String> = bm25.iter().map(|(id, _)| id.clone()).collect();
+      storage.get_chunks(&ids).unwrap().into_iter().map(|c| (c.text, c.id)).collect()
+    };
+
+    // Fixed RRF order A > B > C with strictly decreasing fused scores.
+    let fused = vec![
+      (id_by_text["共识算法甲"].clone(), 0.03),
+      (id_by_text["共识算法乙"].clone(), 0.02),
+      (id_by_text["共识算法丙"].clone(), 0.01),
+    ];
+
+    let (_, rerank_map, ordered) = retriever.prepare_candidates("共识算法", fused, 3).await.unwrap();
+
+    // The reranker only scored the first candidate; B and C keep their RRF
+    // relative order behind it.
+    assert_eq!(rerank_map.len(), 1);
+    assert_eq!(rerank_map[&id_by_text["共识算法甲"]], -1.0);
+    let ordered_ids: Vec<String> = ordered.into_iter().map(|(id, _)| id).collect();
+    assert_eq!(
+      ordered_ids,
+      vec![
+        id_by_text["共识算法甲"].clone(),
+        id_by_text["共识算法乙"].clone(),
+        id_by_text["共识算法丙"].clone(),
+      ]
+    );
   }
 }
