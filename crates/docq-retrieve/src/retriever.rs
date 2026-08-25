@@ -1,5 +1,6 @@
 //! Hybrid retrieval: BM25 + vector recall fused via Reciprocal Rank Fusion.
 
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,6 +47,22 @@ struct ScoreMaps<'a> {
   vector: &'a HashMap<String, f32>,
   rrf: &'a HashMap<String, f32>,
   rerank: &'a HashMap<String, f32>,
+}
+
+/// Order two candidates by reranker score.
+///
+/// A scored candidate sorts before an unscored one: a missing score is not a
+/// `0.0` score. Scored candidates sort by descending score, so negative
+/// cross-encoder scores stay below positive ones but above missing ones.
+/// Unscored candidates compare equal; the stable sort then keeps their fused
+/// (RRF) order.
+fn compare_rerank_scores(a: Option<&f32>, b: Option<&f32>) -> Ordering {
+  match (a, b) {
+    (Some(a), Some(b)) => b.total_cmp(a),
+    (Some(_), None) => Ordering::Less,
+    (None, Some(_)) => Ordering::Greater,
+    (None, None) => Ordering::Equal,
+  }
 }
 
 impl Retriever {
@@ -139,11 +156,7 @@ impl Retriever {
         let rerank_map: HashMap<String, f32> = scored.into_iter().map(|sc| (sc.chunk.id, sc.score)).collect();
 
         let mut sorted: Vec<(String, f32)> = fused.into_iter().take(self.rerank_top_n).collect();
-        sorted.sort_by(|a, b| {
-          let ra = rerank_map.get(&a.0).copied().unwrap_or(0.0);
-          let rb = rerank_map.get(&b.0).copied().unwrap_or(0.0);
-          rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        sorted.sort_by(|a, b| compare_rerank_scores(rerank_map.get(&a.0), rerank_map.get(&b.0)));
 
         Ok((chunk_map, rerank_map, sorted))
       }
@@ -381,18 +394,23 @@ mod tests {
     s
   }
 
-  fn test_retriever(storage: &Arc<SqliteStorage>) -> Retriever {
-    Retriever::new(RetrieverConfig {
+  /// Base config shared by all retriever tests; only the reranker varies.
+  fn test_retriever_config(storage: &Arc<SqliteStorage>, reranker: Option<Arc<dyn Reranker>>) -> RetrieverConfig {
+    RetrieverConfig {
       storage: storage.clone(),
       embedder: Arc::new(StubEmbedder { dim: 512 }),
       segmenter: Arc::new(JiebaSegmenter),
-      reranker: None,
+      reranker,
       bm25_top_k: 100,
       vector_top_k: 100,
       rrf_k: 60,
       rerank_top_n: 20,
       verbose: Verbose(false),
-    })
+    }
+  }
+
+  fn test_retriever(storage: &Arc<SqliteStorage>) -> Retriever {
+    Retriever::new(test_retriever_config(storage, None))
   }
 
   struct StubReranker;
@@ -413,18 +431,17 @@ mod tests {
     }
   }
 
+  struct PartialNegativeReranker;
+
+  #[async_trait::async_trait]
+  impl Reranker for PartialNegativeReranker {
+    async fn rerank(&self, _query: &str, chunks: &[Chunk]) -> Result<Vec<ScoredChunk>> {
+      Ok(chunks.first().cloned().map(|chunk| ScoredChunk { chunk, score: -1.0 }).into_iter().collect())
+    }
+  }
+
   fn test_retriever_with_reranker(storage: &Arc<SqliteStorage>) -> Retriever {
-    Retriever::new(RetrieverConfig {
-      storage: storage.clone(),
-      embedder: Arc::new(StubEmbedder { dim: 512 }),
-      segmenter: Arc::new(JiebaSegmenter),
-      reranker: Some(Arc::new(StubReranker)),
-      bm25_top_k: 100,
-      vector_top_k: 100,
-      rrf_k: 60,
-      rerank_top_n: 20,
-      verbose: Verbose(false),
-    })
+    Retriever::new(test_retriever_config(storage, Some(Arc::new(StubReranker))))
   }
 
   #[tokio::test]
@@ -523,5 +540,64 @@ mod tests {
       assert_eq!(hit.score, hit.explain.final_score);
       assert_eq!(hit.score, hit.explain.rerank_score.unwrap());
     }
+  }
+
+  #[tokio::test]
+  async fn test_scored_candidates_sort_before_missing_rerank_scores() {
+    let storage = Arc::new(test_storage());
+    seed_index(
+      &storage,
+      &[("a.txt", "consensus algorithm"), ("b.txt", "distributed system")],
+    )
+    .await;
+
+    let reranker = Some(Arc::new(PartialNegativeReranker) as Arc<dyn Reranker>);
+    let retriever = Retriever::new(test_retriever_config(&storage, reranker));
+
+    let hits = retriever.search("consensus", 2).await.unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].explain.rerank_score, Some(-1.0));
+    assert!(hits[1].explain.rerank_score.is_none());
+    // Unscored candidates fall back to the RRF score as their final score.
+    assert_eq!(hits[1].score, hits[1].explain.rrf_score.unwrap());
+  }
+
+  #[tokio::test]
+  async fn test_prepare_candidates_keeps_rrf_order_for_unscored() {
+    let storage = Arc::new(test_storage());
+    seed_index(
+      &storage,
+      &[
+        ("a.txt", "consensus alpha"),
+        ("b.txt", "consensus beta"),
+        ("c.txt", "consensus gamma"),
+      ],
+    )
+    .await;
+
+    let reranker = Some(Arc::new(PartialNegativeReranker) as Arc<dyn Reranker>);
+    let retriever = Retriever::new(test_retriever_config(&storage, reranker));
+    let bm25 = retriever.bm25_recall("consensus").await.unwrap();
+    assert_eq!(bm25.len(), 3, "bm25 should recall all three chunks");
+
+    let id_by_text: HashMap<String, String> = {
+      let ids: Vec<String> = bm25.iter().map(|(id, _)| id.clone()).collect();
+      storage.get_chunks(&ids).unwrap().into_iter().map(|c| (c.text, c.id)).collect()
+    };
+
+    // Fixed RRF order A > B > C with strictly decreasing fused scores.
+    let id_a = id_by_text["consensus alpha"].clone();
+    let id_b = id_by_text["consensus beta"].clone();
+    let id_c = id_by_text["consensus gamma"].clone();
+    let fused = vec![(id_a.clone(), 0.03), (id_b.clone(), 0.02), (id_c.clone(), 0.01)];
+
+    let (_, rerank_map, ordered) = retriever.prepare_candidates("consensus", fused, 3).await.unwrap();
+
+    // The reranker only scored the first candidate; B and C keep their RRF
+    // relative order behind it.
+    assert_eq!(rerank_map.len(), 1);
+    assert_eq!(rerank_map[&id_a], -1.0);
+    let ordered_ids: Vec<String> = ordered.into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ordered_ids, vec![id_a, id_b, id_c]);
   }
 }
