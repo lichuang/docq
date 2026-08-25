@@ -37,7 +37,7 @@ cargo clippy --all-features -- -D warnings
 
 **Notes:**
 - The Rust toolchain is pinned to `1.95.0` stable in `rust-toolchain.toml`. Do not use nightly.
-- On macOS, `llama-cpp-2` defaults to Metal. This project forces the CPU backend via `GGML_METAL=OFF` in `.cargo/config.toml` for macOS 14.x compatibility — do not remove this setting.
+- On macOS, `llama-cpp-2` defaults to Metal. This project enables Metal via `GGML_METAL=ON` in `.cargo/config.toml` (for both `aarch64-apple-darwin` and `x86_64-apple-darwin`), plus `CMAKE_CXX_FLAGS="-Wno-elaborated-enum-base"` to silence a warning. Do not remove these settings.
 - The first `cargo check` builds heavy C/C++ dependencies (`libsqlite3-sys`, `llama-cpp-sys-2`, `ort-sys`); 5–10 minutes is normal. Incremental builds are much faster.
 
 ## Architecture and crate relationships
@@ -48,7 +48,7 @@ cargo clippy --all-features -- -D warnings
                  ▼
             docq            facade — the only crate library users touch
           ╱      │      ╲
-  retrieve     index    synthesize        synthesize is optional (feature "ask")
+  retrieve     index    synthesize        synthesize is optional (needs docq-model/llm)
       │  ╲      │          │
       │   ╲     │          ▼
       │    ╲    │       model           GGUF / ONNX backends
@@ -75,7 +75,7 @@ cargo clippy --all-features -- -D warnings
 - `docq-core` does not depend on any other internal crate — it defines all traits that other crates implement. This is the key to the library-first promise: `cargo add docq-core` does not pull in SQLite, llama.cpp, or other heavy stacks.
 - `indexer` and `retrieve` do not depend on each other; both operate on data via the `Storage` trait.
 - SQLite details are fully isolated within `docq-storage`.
-- `docq-model` uses feature flags so consumers enable only the backends they need (avoiding "just want search but must compile llama.cpp").
+- `docq-model` uses feature flags (`embed` / `rerank` / `llm`, all on by default) so consumers enable only the backends they need (avoiding "just want search but must compile llama.cpp").
 
 ## Key design decisions (do not overturn without intent)
 
@@ -83,11 +83,11 @@ cargo clippy --all-features -- -D warnings
 2. **No `InMemoryStorage`**. Tests use `SqliteStorage::open_in_memory()` (SQLite `:memory:` mode, millisecond startup).
 3. **`chunks.text` is the original text; `fts_chunks.text` is the jieba-tokenized space-joined text**. `StorageTx::add_fts_chunks(chunk_ids, tokenized_texts)` writes to the FTS table separately — `add_chunks` only writes the `chunks` table. `IndexTx` calls both methods inside one `begin_tx` / `commit` bracket.
 4. **All mutations flow through `StorageTx`** — `Storage` is read-only (queries + `init` + `begin_tx`). This enforces transactional writes at the type level: `docq-retrieve` holds `&Storage` and cannot write; `docq-indexer` holds `&mut dyn StorageTx` and all four indexed tables (`documents` / `chunks` / `vec_chunks` / `fts_chunks`) plus `model_versions` commit atomically, so a re-embedding failure cannot leave the store half-written.
-5. **`Document.id` is the file-relative path** — renaming the file triggers a reindex, keeping the logic simple.
+5. **`Document.id` is the SHA-256 of the file path** — renaming the file changes the id and triggers a reindex, keeping the logic simple.
 6. **`Chunk.id` is the SHA-256 of `text`** — naturally enables content-addressed dedup and change detection.
 7. **Embedding model upgrades trigger an explicit reindex**: the `model_versions` table records the current model spec for each role; the indexer compares the stored spec with the live one and forces a re-embedding when they differ, avoiding silent staleness.
 8. **Invalid citations in the `ask` flow are filtered out**: after the LLM produces `[N]` markers, only those that actually appear in the provided context are kept.
-9. **Not in v0.1**: MCP server, PDF/xlsx/docx parsing, Python bindings, file-watcher auto-indexing, `docq model` subcommand; citation precision is limited to "file + byte range" (not heading/page/row).
+9. **Not in v0.1**: MCP server, xlsx parsing, Python bindings, file-watcher auto-indexing, `docq model` subcommand; citation precision is limited to "file + byte range" (not heading/page/row).
 
 ## Code style
 
@@ -124,7 +124,7 @@ Before committing, make sure:
 
 - `sqlite-vec` registers itself process-globally via `sqlite3_auto_extension` — guarded by a `std::sync::Once` to avoid duplicate registration. See `ensure_vec_extension()` in `crates/docq-storage/src/sqlite.rs`.
 - Vectors are passed to sqlite-vec as packed native-endian `f32` byte streams; KNN queries use `WHERE embedding MATCH ?1 AND k = ?2 ORDER BY distance`.
-- `llama-cpp-2` requires cmake to compile the `llama.cpp` C++ source; first build is slow. `GGML_METAL=OFF` makes it use the CPU backend (macOS 14.x compatibility).
+- `llama-cpp-2` requires cmake to compile the `llama.cpp` C++ source; first build is slow. `GGML_METAL=ON` enables the Metal GPU backend on macOS (set in `.cargo/config.toml`).
 - `fastembed` pulls in the ONNX runtime and model files; on first run it downloads models to `~/.cache/fastembed` or a similar directory.
 
 ## Common task navigation
