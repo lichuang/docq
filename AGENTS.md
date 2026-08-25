@@ -30,6 +30,9 @@ cargo fmt --all
 
 # Clippy (project requires -D warnings)
 cargo clippy --all-features -- -D warnings
+
+# Run the full pre-commit suite (check + test + fmt + clippy) in one shot
+./pre-commit-check.sh
 ```
 
 **Notes:**
