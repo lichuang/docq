@@ -36,3 +36,7 @@ docx = ["docq-indexer/docx"]
 
 [dev-dependencies]
 tempfile = "3"
+
+[lib]
+name = "docq"
+path = "src/lib.rs"
