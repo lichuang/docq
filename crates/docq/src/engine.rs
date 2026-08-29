@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use docq_core::{
-  Chunker, Collection, Embedder, EngineStatus, Llm, LlmConfig, ModelRole, ModelSpec, Reranker, Result, SearchHit,
-  Storage, Verbose, WordSegmenter,
+  Chunker, Collection, Embedder, EngineStatus, IndexEvent, IndexProgressCallback, Llm, LlmConfig, ModelRole, ModelSpec,
+  Reranker, Result, SearchHit, Storage, Verbose, WordSegmenter,
 };
 #[cfg(feature = "docx")]
 use docq_indexer::DocxReader;
@@ -81,6 +81,7 @@ impl Engine {
       embedding_spec,
       chunk_size,
       chunk_overlap,
+      progress: None,
     });
 
     let retriever = Arc::new(Retriever::new(RetrieverConfig {
@@ -314,9 +315,29 @@ impl Engine {
     let collections = self.storage.list_collections()?;
     let mut stats = IndexStats::default();
     for col in collections {
-      let s = self.indexer.index_directory(&col.path).await?;
+      let s = self.indexer.index_directory(Path::new(&col.path)).await?;
       stats = stats + s;
     }
+    Ok(stats)
+  }
+
+  pub async fn index_with_progress(&self, progress: &IndexProgressCallback) -> Result<IndexStats> {
+    let _total = self.verbose.start("index");
+    let collections = self.storage.list_collections()?;
+    let mut stats = IndexStats::default();
+    for col in collections {
+      let s = self.indexer.index_directory_with_progress(Path::new(&col.path), Some(progress)).await?;
+      let chunks = s.chunks_indexed;
+      stats = stats + s;
+      progress(IndexEvent::SourceComplete {
+        source_id: col.name.clone(),
+        chunks,
+      });
+    }
+    progress(IndexEvent::Complete {
+      files: stats.files_indexed,
+      chunks: stats.chunks_indexed,
+    });
     Ok(stats)
   }
 
@@ -327,7 +348,26 @@ impl Engine {
       .into_iter()
       .find(|c| c.name == name)
       .ok_or_else(|| docq_core::StoreError::NotFound(name.to_string()))?;
-    self.indexer.index_directory(&col.path).await
+    self.indexer.index_directory(Path::new(&col.path)).await
+  }
+
+  pub async fn index_one_with_progress(&self, name: &str, progress: &IndexProgressCallback) -> Result<IndexStats> {
+    let _total = self.verbose.start("index one collection");
+    let collections = self.storage.list_collections()?;
+    let col = collections
+      .into_iter()
+      .find(|c| c.name == name)
+      .ok_or_else(|| docq_core::StoreError::NotFound(name.to_string()))?;
+    let stats = self.indexer.index_directory_with_progress(Path::new(&col.path), Some(progress)).await?;
+    progress(IndexEvent::SourceComplete {
+      source_id: col.name.clone(),
+      chunks: stats.chunks_indexed,
+    });
+    progress(IndexEvent::Complete {
+      files: stats.files_indexed,
+      chunks: stats.chunks_indexed,
+    });
+    Ok(stats)
   }
 
   pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {

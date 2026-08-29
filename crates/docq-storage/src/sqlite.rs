@@ -884,7 +884,7 @@ mod tests {
     storage.init(512).unwrap();
 
     let doc = make_doc("doc1.txt", "content");
-    let chunks = vec![
+    let chunks = [
       ("c1", "分布式 共识 算法 解决 多个 节点 达成 一致 的 问题"),
       ("c2", "Raft 是 一种 易于 理解 的 共识 算法"),
       ("c3", "今天 天气 不错"),
@@ -921,10 +921,10 @@ mod tests {
     {
       let mut tx = storage.begin_tx().unwrap();
       tx.add_document(&doc).unwrap();
-      tx.add_chunks(&[chunk.clone()]).unwrap();
+      tx.add_chunks(std::slice::from_ref(&chunk)).unwrap();
       tx.add_chunk_documents(&["c1".to_string()], "doc1.txt").unwrap();
-      tx.add_vectors(&["c1".to_string()], &[embedding.clone()]).unwrap();
-      tx.add_fts_chunks(&["c1".to_string()], &[tokenized.clone()]).unwrap();
+      tx.add_vectors(&["c1".to_string()], std::slice::from_ref(&embedding)).unwrap();
+      tx.add_fts_chunks(&["c1".to_string()], std::slice::from_ref(&tokenized)).unwrap();
       tx.commit().unwrap();
     }
 

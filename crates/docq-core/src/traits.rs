@@ -98,3 +98,68 @@ pub trait StorageTx {
   fn add_collection(&mut self, name: &str, path: &str) -> Result<()>;
   fn commit(&mut self) -> Result<()>;
 }
+
+/// Events emitted while building or rebuilding an index.
+///
+/// Callers supply a callback `Fn(IndexEvent) + Send + Sync` (typically via
+/// [`IndexerConfig::progress`](docq_indexer::IndexerConfig::progress) or
+/// [`Engine::index_with_progress`](docq::Engine::index_with_progress)) to
+/// stream these events to a UI.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndexEvent {
+  /// Indexing started; number of sources/files to process.
+  ScanStart {
+    /// Total number of sources or files that will be processed.
+    total_sources: usize,
+  },
+
+  /// A source is about to be indexed.
+  SourceStarted {
+    /// Identifier of the source (e.g. collection name).
+    source_id: String,
+  },
+
+  /// A file was parsed into chunks.
+  FileParsed {
+    /// Identifier of the source this file belongs to.
+    source_id: String,
+    /// Path of the parsed file.
+    path: String,
+    /// Number of chunks produced from the file.
+    chunks: usize,
+  },
+
+  /// A batch of chunks is being embedded.
+  EmbeddingBatch {
+    /// Number of chunks in this batch.
+    count: usize,
+  },
+
+  /// The index store is being written.
+  WritingStore,
+
+  /// A source finished indexing.
+  SourceComplete {
+    /// Identifier of the source.
+    source_id: String,
+    /// Number of chunks indexed for this source.
+    chunks: usize,
+  },
+
+  /// Indexing is complete.
+  Complete {
+    /// Total number of files indexed.
+    files: usize,
+    /// Total number of chunks indexed.
+    chunks: usize,
+  },
+
+  /// An error occurred.
+  Error {
+    /// Human-readable error message.
+    message: String,
+  },
+}
+
+/// Type alias for the indexing progress callback.
+pub type IndexProgressCallback = dyn Fn(IndexEvent) + Send + Sync;

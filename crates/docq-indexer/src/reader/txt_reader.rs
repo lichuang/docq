@@ -84,7 +84,7 @@ mod tests {
   fn test_txt_reader_skips_non_utf8() {
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("bad.txt");
-    fs::write(&path, &[0xFF, 0xFE, 0xFD]).unwrap();
+    fs::write(&path, [0xFF, 0xFE, 0xFD]).unwrap();
 
     let reader = TextFileReader::new();
     assert!(reader.read(&path).unwrap().is_none());

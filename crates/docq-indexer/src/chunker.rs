@@ -196,7 +196,7 @@ mod tests {
     }
     let model = WordLevelBuilder::new().vocab(vocab).unk_token("[UNK]".to_string()).build().unwrap();
     let mut tok = Tokenizer::new(model);
-    tok.with_pre_tokenizer(Some(Whitespace::default()));
+    tok.with_pre_tokenizer(Some(Whitespace));
     tok
   }
 

@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
-use docq_core::{Chunk, Chunker, Document, Embedder, ModelRole, ModelSpec, Result, Storage, Verbose, WordSegmenter};
+use docq_core::{
+  Chunk, Chunker, Document, Embedder, IndexEvent, IndexProgressCallback, ModelRole, ModelSpec, Result, Storage,
+  Verbose, WordSegmenter,
+};
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -55,6 +58,8 @@ pub struct IndexerConfig {
   pub embedding_spec: ModelSpec,
   pub chunk_size: usize,
   pub chunk_overlap: usize,
+  /// Optional global progress callback for all indexing operations.
+  pub progress: Option<Arc<IndexProgressCallback>>,
 }
 
 pub struct Indexer {
@@ -67,6 +72,7 @@ pub struct Indexer {
   embedding_spec: ModelSpec,
   chunk_size: usize,
   chunk_overlap: usize,
+  progress: Option<Arc<IndexProgressCallback>>,
 }
 
 struct PendingFile {
@@ -90,6 +96,13 @@ impl Indexer {
       embedding_spec: config.embedding_spec,
       chunk_size: config.chunk_size,
       chunk_overlap: config.chunk_overlap,
+      progress: config.progress,
+    }
+  }
+
+  fn emit_progress_event(&self, progress: Option<&IndexProgressCallback>, event: IndexEvent) {
+    if let Some(callback) = progress {
+      callback(event);
     }
   }
 
@@ -117,6 +130,20 @@ impl Indexer {
   }
 
   pub async fn index_file(&self, path: &Path) -> Result<IndexStats> {
+    self.index_file_impl(path, self.progress.as_deref()).await
+  }
+
+  pub async fn index_file_with_progress(
+    &self,
+    path: &Path,
+    progress: Option<&IndexProgressCallback>,
+  ) -> Result<IndexStats> {
+    self.index_file_impl(path, progress.or(self.progress.as_deref())).await
+  }
+
+  async fn index_file_impl(&self, path: &Path, progress: Option<&IndexProgressCallback>) -> Result<IndexStats> {
+    self.emit_progress_event(progress, IndexEvent::ScanStart { total_sources: 1 });
+
     let doc_src = match self.readers.read_file(path)? {
       Some(doc) => doc,
       None => {
@@ -126,28 +153,69 @@ impl Indexer {
         });
       }
     };
+
     let existing_docs = self.storage.list_documents()?;
     let existing_map: HashMap<String, Document> = existing_docs.into_iter().map(|d| (d.id.clone(), d)).collect();
     let force_reindex = self.needs_reindex()?;
+
     match self.prepare_file(&doc_src.path, &doc_src.content, &existing_map, force_reindex)? {
       Some(pending) => {
+        let path = pending.path.to_string_lossy().to_string();
+        self.emit_progress_event(
+          progress,
+          IndexEvent::FileParsed {
+            source_id: path.clone(),
+            path,
+            chunks: pending.chunks.len(),
+          },
+        );
         let mut batch = vec![pending];
-        let stats = self.flush_batch(&mut batch).await?;
+        let stats = self.flush_batch(&mut batch, progress).await?;
         if force_reindex {
           self.update_index_meta()?;
         }
+        self.emit_progress_event(
+          progress,
+          IndexEvent::Complete {
+            files: stats.files_indexed,
+            chunks: stats.chunks_indexed,
+          },
+        );
         Ok(stats)
       }
-      None => Ok(IndexStats {
-        files_skipped: 1,
-        ..Default::default()
-      }),
+      None => {
+        let stats = IndexStats {
+          files_skipped: 1,
+          ..Default::default()
+        };
+        self.emit_progress_event(
+          progress,
+          IndexEvent::Complete {
+            files: stats.files_indexed,
+            chunks: stats.chunks_indexed,
+          },
+        );
+        Ok(stats)
+      }
     }
   }
 
   pub async fn index_directory(&self, path: &Path) -> Result<IndexStats> {
+    self.index_directory_impl(path, self.progress.as_deref()).await
+  }
+
+  pub async fn index_directory_with_progress(
+    &self,
+    path: &Path,
+    progress: Option<&IndexProgressCallback>,
+  ) -> Result<IndexStats> {
+    self.index_directory_impl(path, progress.or(self.progress.as_deref())).await
+  }
+
+  async fn index_directory_impl(&self, path: &Path, progress: Option<&IndexProgressCallback>) -> Result<IndexStats> {
     let file_paths = self.readers.list_files(path, true)?;
     let total = file_paths.len();
+    self.emit_progress_event(progress, IndexEvent::ScanStart { total_sources: total });
 
     let current_doc_ids: std::collections::HashSet<String> =
       file_paths.iter().map(|p| sha256_hex(&p.to_string_lossy())).collect();
@@ -196,10 +264,19 @@ impl Indexer {
     let mut pending_chunk_count = 0usize;
 
     for pf in prepared.into_iter().flatten() {
+      let path = pf.path.to_string_lossy().to_string();
+      self.emit_progress_event(
+        progress,
+        IndexEvent::FileParsed {
+          source_id: path.clone(),
+          path,
+          chunks: pf.chunks.len(),
+        },
+      );
       pending_chunk_count += pf.chunks.len();
       pending.push(pf);
       if pending_chunk_count >= EMBED_BATCH_SIZE {
-        let s = self.flush_batch(&mut pending).await?;
+        let s = self.flush_batch(&mut pending, progress).await?;
         stats.files_indexed += s.files_indexed;
         stats.chunks_indexed += s.chunks_indexed;
         pending_chunk_count = 0;
@@ -210,7 +287,7 @@ impl Indexer {
     stats.files_skipped = skipped;
 
     if !pending.is_empty() {
-      let s = self.flush_batch(&mut pending).await?;
+      let s = self.flush_batch(&mut pending, progress).await?;
       stats.files_indexed += s.files_indexed;
       stats.chunks_indexed += s.chunks_indexed;
     }
@@ -219,6 +296,13 @@ impl Indexer {
       self.update_index_meta()?;
     }
 
+    self.emit_progress_event(
+      progress,
+      IndexEvent::Complete {
+        files: stats.files_indexed,
+        chunks: stats.chunks_indexed,
+      },
+    );
     Ok(stats)
   }
 
@@ -316,11 +400,17 @@ impl Indexer {
 
   /// Embed all chunks in `pending` in one batch, then write to storage
   /// in groups of `TX_BATCH_SIZE` files per transaction.
-  async fn flush_batch(&self, pending: &mut Vec<PendingFile>) -> Result<IndexStats> {
+  async fn flush_batch(
+    &self,
+    pending: &mut Vec<PendingFile>,
+    progress: Option<&IndexProgressCallback>,
+  ) -> Result<IndexStats> {
     const TX_BATCH_SIZE: usize = 5;
 
     let all_texts: Vec<String> = pending.iter().flat_map(|f| f.chunk_texts.iter().cloned()).collect();
+    self.emit_progress_event(progress, IndexEvent::EmbeddingBatch { count: all_texts.len() });
     let all_embeddings = self.embedder.embed(&all_texts).await?;
+    self.emit_progress_event(progress, IndexEvent::WritingStore);
 
     let mut stats = IndexStats::default();
     let mut offset = 0usize;
@@ -441,6 +531,7 @@ mod tests {
       embedding_spec: test_embedding_spec(),
       chunk_size,
       chunk_overlap,
+      progress: None,
     })
   }
 
@@ -527,6 +618,7 @@ mod tests {
       embedding_spec: test_embedding_spec(),
       chunk_size: 1024,
       chunk_overlap: 102,
+      progress: None,
     });
     indexer.index_directory(tmp.path()).await.unwrap();
 
@@ -544,6 +636,7 @@ mod tests {
       embedding_spec: test_embedding_spec(),
       chunk_size: 1024,
       chunk_overlap: 102,
+      progress: None,
     });
     let stats = indexer2.index_directory(tmp.path()).await.unwrap();
     assert_eq!(stats.files_removed, 1);
@@ -570,6 +663,7 @@ mod tests {
       embedding_spec: test_embedding_spec(),
       chunk_size: 1024,
       chunk_overlap: 102,
+      progress: None,
     });
 
     indexer.index_file(&path).await.unwrap();
@@ -603,6 +697,7 @@ mod tests {
       embedding_spec: spec_v1,
       chunk_size: 1024,
       chunk_overlap: 102,
+      progress: None,
     });
     let stats1 = indexer_v1.index_file(&path).await.unwrap();
     assert_eq!(stats1.files_indexed, 1);
@@ -627,6 +722,7 @@ mod tests {
       embedding_spec: spec_v2,
       chunk_size: 1024,
       chunk_overlap: 102,
+      progress: None,
     });
     let stats3 = indexer_v2.index_file(&path).await.unwrap();
     assert_eq!(stats3.files_indexed, 1, "model changed — file must be re-embedded");
