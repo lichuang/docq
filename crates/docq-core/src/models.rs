@@ -41,6 +41,62 @@ pub struct SearchHit {
   pub explain: ScoreExplain,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchStage {
+  EmbedQuery,
+  Bm25Recall,
+  VectorRecall,
+  Fusion,
+  Rerank,
+  ResolvePaths,
+  Assemble,
+}
+
+impl SearchStage {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::EmbedQuery => "embed_query",
+      Self::Bm25Recall => "bm25_recall",
+      Self::VectorRecall => "vector_recall",
+      Self::Fusion => "fusion",
+      Self::Rerank => "rerank",
+      Self::ResolvePaths => "resolve_paths",
+      Self::Assemble => "assemble",
+    }
+  }
+}
+
+impl std::fmt::Display for SearchStage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(self.as_str())
+  }
+}
+
+/// Aggregated timings of one hybrid-search run, in milliseconds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchStats {
+  pub total_ms: u64,
+  pub embed_ms: u64,
+  pub bm25_ms: u64,
+  pub vector_ms: u64,
+  pub fusion_ms: u64,
+  pub rerank_ms: u64,
+}
+
+/// Streaming events emitted by the hybrid search pipeline, in order.
+/// The stream ends after `Completed` or when the underlying future returns Err.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SearchEvent {
+  /// A pipeline stage started — for progress display.
+  StageStarted { stage: SearchStage },
+  /// A pipeline stage finished — carries the stage duration.
+  StageFinished { stage: SearchStage, elapsed_ms: u64 },
+  /// Retrieval finished: final ranked hits. Also the terminal event.
+  Completed { hits: Vec<SearchHit>, stats: SearchStats },
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScoreExplain {
   pub bm25_score: Option<f32>,

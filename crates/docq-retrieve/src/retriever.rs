@@ -4,13 +4,30 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use docq_core::{
-  Chunk, EmbedError, Embedder, Reranker, Result, RetrieveError, ScoreExplain, ScoredChunk, SearchHit, Storage, Verbose,
-  WordSegmenter,
+  Chunk, DocqError, EmbedError, Embedder, Reranker, Result, RetrieveError, ScoreExplain, ScoredChunk, SearchEvent,
+  SearchHit, SearchStage, SearchStats, Storage, Verbose, WordSegmenter,
 };
+use tokio::sync::mpsc::{self, Sender};
+use tokio_stream::Stream;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::fusion;
+
+type SearchEventItem = std::result::Result<SearchEvent, DocqError>;
+type SearchEventSender = Sender<SearchEventItem>;
+
+async fn send_event(tx: &SearchEventSender, event: SearchEvent) -> bool {
+  if let Err(e) = tx.send(Ok(event)).await {
+    log::error!("search stream send failed: {e}");
+    false
+  } else {
+    true
+  }
+}
 
 pub struct RetrieverConfig {
   pub storage: Arc<dyn Storage>,
@@ -29,6 +46,7 @@ pub struct RetrieverConfig {
   pub verbose: Verbose,
 }
 
+#[derive(Clone)]
 pub struct Retriever {
   storage: Arc<dyn Storage>,
   embedder: Arc<dyn Embedder>,
@@ -47,6 +65,16 @@ struct ScoreMaps<'a> {
   vector: &'a HashMap<String, f32>,
   rrf: &'a HashMap<String, f32>,
   rerank: &'a HashMap<String, f32>,
+}
+
+/// Result of a single recall channel, carrying its hits plus per-stage timings.
+/// Each recall method fills only the fields it measures; the caller merges
+/// them into `SearchStats`.
+struct RecallResult {
+  hits: Vec<(String, f32)>,
+  bm25_ms: u64,
+  embed_ms: u64,
+  vector_ms: u64,
 }
 
 /// Order two candidates by reranker score.
@@ -82,9 +110,42 @@ impl Retriever {
 
   /// Lexical recall using BM25 over the FTS5 index.
   ///
+  /// Emits `StageStarted`/`StageFinished` events around the actual query, then
+  /// returns the hits plus the measured wall time.
+  async fn bm25_recall(&self, query: &str, tx: &SearchEventSender) -> Result<RecallResult> {
+    if let Err(e) = tx
+      .send(Ok(SearchEvent::StageStarted {
+        stage: SearchStage::Bm25Recall,
+      }))
+      .await
+    {
+      log::error!("search stream send failed at bm25 start: {e}");
+    }
+    let start = Instant::now();
+    let hits = self.bm25_recall_impl(query).await?;
+    let bm25_ms = start.elapsed().as_millis() as u64;
+    if let Err(e) = tx
+      .send(Ok(SearchEvent::StageFinished {
+        stage: SearchStage::Bm25Recall,
+        elapsed_ms: bm25_ms,
+      }))
+      .await
+    {
+      log::error!("search stream send failed at bm25 end: {e}");
+    }
+    Ok(RecallResult {
+      hits,
+      bm25_ms,
+      embed_ms: 0,
+      vector_ms: 0,
+    })
+  }
+
+  /// BM25 recall core, without event emission.
+  ///
   /// Runs on a blocking thread so the caller can `tokio::join!` it with the
   /// async vector recall and overlap the embedding call with the FTS5 query.
-  async fn bm25_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
+  async fn bm25_recall_impl(&self, query: &str) -> Result<Vec<(String, f32)>> {
     let storage = self.storage.clone();
     let segmenter = self.segmenter.clone();
     let bm25_top_k = self.bm25_top_k;
@@ -106,14 +167,60 @@ impl Retriever {
   /// Semantic recall using dense vector KNN search.
   ///
   /// Embeds the query and searches the sqlite-vec `vec_chunks` table.
-  /// Returns `(chunk_id, similarity)` tuples (higher = closer).
-  async fn vector_recall(&self, query: &str) -> Result<Vec<(String, f32)>> {
+  /// Emits `StageStarted`/`StageFinished` pairs for the embed and KNN steps,
+  /// then returns the hits plus both measured wall times.
+  async fn vector_recall(&self, query: &str, tx: &SearchEventSender) -> Result<RecallResult> {
+    if let Err(e) = tx
+      .send(Ok(SearchEvent::StageStarted {
+        stage: SearchStage::EmbedQuery,
+      }))
+      .await
+    {
+      log::error!("search stream send failed at embed start: {e}");
+    }
+    let embed_start = Instant::now();
     let query_embedding = {
       let _step = self.verbose.start("embed query");
       self.embedder.embed(&[query.to_string()]).await?.into_iter().next().ok_or(EmbedError::EmptyResult)?
     };
+    let embed_ms = embed_start.elapsed().as_millis() as u64;
+    if let Err(e) = tx
+      .send(Ok(SearchEvent::StageFinished {
+        stage: SearchStage::EmbedQuery,
+        elapsed_ms: embed_ms,
+      }))
+      .await
+    {
+      log::error!("search stream send failed at embed end: {e}");
+    }
+
+    if let Err(e) = tx
+      .send(Ok(SearchEvent::StageStarted {
+        stage: SearchStage::VectorRecall,
+      }))
+      .await
+    {
+      log::error!("search stream send failed at vector recall start: {e}");
+    }
+    let knn_start = Instant::now();
     let _step = self.verbose.start("vector recall");
-    self.storage.search_vectors(&query_embedding, self.vector_top_k)
+    let hits = self.storage.search_vectors(&query_embedding, self.vector_top_k)?;
+    let vector_ms = knn_start.elapsed().as_millis() as u64;
+    if let Err(e) = tx
+      .send(Ok(SearchEvent::StageFinished {
+        stage: SearchStage::VectorRecall,
+        elapsed_ms: vector_ms,
+      }))
+      .await
+    {
+      log::error!("search stream send failed at vector recall end: {e}");
+    }
+    Ok(RecallResult {
+      hits,
+      bm25_ms: 0,
+      embed_ms,
+      vector_ms,
+    })
   }
 
   /// Resolve full chunk content and decide the final result order.
@@ -210,24 +317,15 @@ impl Retriever {
       .collect()
   }
 
-  /// Hybrid search entry point.
+  /// Streaming variant of [`Retriever::search`].
   ///
-  /// The overall pipeline is:
+  /// Runs the pipeline in an independent task that pushes [`SearchEvent`]s
+  /// into a bounded channel as stages complete. The consumer's iteration
+  /// speed does not affect the pipeline — backpressure is capped by the
+  /// channel buffer, and dropping the stream cancels the pipeline early.
   ///
-  /// 1. **BM25 lexical recall** — segment the query the same way as the
-  ///    indexed text (jieba), escape FTS5 special characters, and search the
-  ///    `fts_chunks` table.
-  /// 2. **Vector semantic recall** — embed the query and run a KNN search on
-  ///    `vec_chunks` using cosine distance. The storage layer converts distance
-  ///    to similarity (`1.0 - distance`) so all scores follow "higher is better".
-  /// 3. **RRF fusion** — combine BM25 and vector rankings with Reciprocal
-  ///    Rank Fusion. Only ranks matter here, not raw scores.
-  /// 4. **Optional reranking** — if a cross-encoder reranker is configured,
-  ///    score the top `rerank_top_n` fused chunks and re-sort by the rerank
-  ///    score.
-  /// 5. **Enrichment** — fetch the full chunk text from `chunks` and resolve
-  ///    each chunk's source file path from `document_paths`.
-  /// 6. **Assembly** — build `SearchHit`s with per-stage `ScoreExplain`.
+  /// The stream terminates with a `Completed` event carrying the final hits
+  /// plus per-stage timings. Errors surface as `Err` items and end the stream.
   ///
   /// Score directions in `ScoreExplain` are unified to "higher is better":
   /// - `bm25_score`: negated FTS5 BM25 score (higher = more relevant)
@@ -235,45 +333,177 @@ impl Retriever {
   /// - `rrf_score`: RRF fused score (higher = better rank)
   /// - `rerank_score` / `final_score`: cross-encoder score (higher = more
   ///   relevant); when no reranker is configured, `final_score = rrf_score`.
-  pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
+  pub fn search_stream(
+    self: Arc<Self>,
+    query: impl Into<String>,
+    top_k: usize,
+  ) -> impl Stream<Item = std::result::Result<SearchEvent, DocqError>> + Send + 'static {
+    let (tx, rx) = mpsc::channel::<SearchEventItem>(32);
+    let query = query.into();
+
+    tokio::spawn(async move {
+      if let Err(e) = self.search_internal(&query, top_k, &tx).await {
+        let _ = tx.send(Err(e)).await;
+      }
+    });
+
+    ReceiverStream::new(rx)
+  }
+
+  /// Pipeline core shared by `search_stream`. Runs all stages, pushing
+  /// progress events into `tx`, and terminates with a `Completed` event.
+  ///
+  /// Returns `Ok(())` when the pipeline finishes normally or when the downstream
+  /// consumer is dropped. Returns `Err` if any stage fails; the spawned caller
+  /// forwards that error as the final item on the stream.
+  async fn search_internal(
+    &self,
+    query: &str,
+    top_k: usize,
+    tx: &SearchEventSender,
+  ) -> std::result::Result<(), DocqError> {
+    let total_start = Instant::now();
+    let mut stats = SearchStats::default();
+
     if query.trim().is_empty() {
-      return Ok(Vec::new());
+      let _ = tx
+        .send(Ok(SearchEvent::Completed {
+          hits: Vec::new(),
+          stats,
+        }))
+        .await;
+      return Ok(());
     }
 
     let _total = self.verbose.start("search");
 
-    // run `bm25_recall` and `vector_recall` concurrently
-    let (bm25_results, vector_raw) = tokio::join!(self.bm25_recall(query), self.vector_recall(query));
-    let bm25_results = bm25_results?;
-    let vector_raw = vector_raw?;
+    // ---- Recall stages: BM25 (blocking thread) + vector embed+KNN, concurrent ----
+    // Each recall method emits its own StageStarted/StageFinished events and
+    // returns its measured timings via `RecallResult`.
+    let (bm25_res, vec_res) = tokio::join!(self.bm25_recall(query, tx), self.vector_recall(query, tx));
 
-    // ---- RRF fusion ----
-    // RRF uses only rank positions, not raw scores, so the directional
-    // difference between BM25 (higher better) and distance (lower better)
-    // does not affect fusion. Pass the original score vectors; fusion
-    // ignores their values and uses rank only.
-    let fused = {
-      let _step = self.verbose.start("RRF fusion");
-      fusion::reciprocal_rank_fusion(&[&bm25_results, &vector_raw], self.rrf_k)
+    let (bm25_results, vector_raw) = match (bm25_res, vec_res) {
+      (Ok(b), Ok(v)) => (b, v),
+      (Err(e), _) | (_, Err(e)) => {
+        return Err(e);
+      }
     };
+
+    stats.bm25_ms = bm25_results.bm25_ms;
+    stats.embed_ms = vector_raw.embed_ms;
+    stats.vector_ms = vector_raw.vector_ms;
+    let bm25_results = bm25_results.hits;
+    let vector_raw = vector_raw.hits;
+
+    if !send_event(
+      tx,
+      SearchEvent::StageStarted {
+        stage: SearchStage::Fusion,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
+    let t = Instant::now();
+    let fused = fusion::reciprocal_rank_fusion(&[&bm25_results, &vector_raw], self.rrf_k);
+    stats.fusion_ms = t.elapsed().as_millis() as u64;
+    if !send_event(
+      tx,
+      SearchEvent::StageFinished {
+        stage: SearchStage::Fusion,
+        elapsed_ms: stats.fusion_ms,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
+
     if fused.is_empty() {
-      return Ok(Vec::new());
+      stats.total_ms = total_start.elapsed().as_millis() as u64;
+      let _ = tx
+        .send(Ok(SearchEvent::Completed {
+          hits: Vec::new(),
+          stats,
+        }))
+        .await;
+      return Ok(());
     }
 
     let rrf_map: HashMap<String, f32> = fused.iter().cloned().collect();
 
-    // ---- Resolve full chunks and decide final ordering ----
-    let (chunk_map, rerank_map, ordered) = self.prepare_candidates(query, fused, top_k).await?;
+    // ---- Resolve full chunks, rerank, decide final ordering ----
+    if !send_event(
+      tx,
+      SearchEvent::StageStarted {
+        stage: SearchStage::Rerank,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
+    let rerank_t = Instant::now();
+    let (chunk_map, rerank_map, ordered) = match self.prepare_candidates(query, fused, top_k).await {
+      Ok(v) => v,
+      Err(e) => {
+        return Err(e);
+      }
+    };
+    stats.rerank_ms = rerank_t.elapsed().as_millis() as u64;
+    if !send_event(
+      tx,
+      SearchEvent::StageFinished {
+        stage: SearchStage::Rerank,
+        elapsed_ms: stats.rerank_ms,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
 
-    // ---- Resolve source file paths for the retrieved chunks ----
-    let file_paths = self.resolve_file_paths(&chunk_map)?;
+    // ---- Resolve source file paths ----
+    if !send_event(
+      tx,
+      SearchEvent::StageStarted {
+        stage: SearchStage::ResolvePaths,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
+    let file_paths = match self.resolve_file_paths(&chunk_map) {
+      Ok(v) => v,
+      Err(e) => {
+        return Err(e);
+      }
+    };
+    let _ = tx
+      .send(Ok(SearchEvent::StageFinished {
+        stage: SearchStage::ResolvePaths,
+        elapsed_ms: 0,
+      }))
+      .await;
 
-    // Build lookup maps for per-channel scores shown in ScoreExplain.
     let bm25_map: HashMap<String, f32> = bm25_results.iter().cloned().collect();
     let vector_map: HashMap<String, f32> = vector_raw.iter().cloned().collect();
 
-    // ---- Assemble SearchHit with per-stage ScoreExplain ----
-    Ok(self.assemble_hits(
+    if !send_event(
+      tx,
+      SearchEvent::StageStarted {
+        stage: SearchStage::Assemble,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
+
+    let assemble_start = Instant::now();
+    let hits = self.assemble_hits(
       ordered,
       top_k,
       &chunk_map,
@@ -284,7 +514,40 @@ impl Retriever {
         rrf: &rrf_map,
         rerank: &rerank_map,
       },
-    ))
+    );
+
+    if !send_event(
+      tx,
+      SearchEvent::StageFinished {
+        stage: SearchStage::Assemble,
+        elapsed_ms: assemble_start.elapsed().as_millis() as u64,
+      },
+    )
+    .await
+    {
+      return Ok(());
+    }
+
+    stats.total_ms = total_start.elapsed().as_millis() as u64;
+
+    let _ = tx.send(Ok(SearchEvent::Completed { hits, stats })).await;
+    Ok(())
+  }
+
+  /// Hybrid search entry point.
+  ///
+  /// Folds events from [`Retriever::search_stream`] into the final hit set.
+  pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
+    let stream = Arc::new(self.clone()).search_stream(query.to_string(), top_k);
+    let mut stream = std::pin::pin!(stream);
+    while let Some(event) = stream.as_mut().next().await {
+      match event {
+        Ok(docq_core::SearchEvent::Completed { hits, .. }) => return Ok(hits),
+        Ok(_) => continue,
+        Err(e) => return Err(e),
+      }
+    }
+    Ok(Vec::new())
   }
 }
 
@@ -578,7 +841,7 @@ mod tests {
 
     let reranker = Some(Arc::new(PartialNegativeReranker) as Arc<dyn Reranker>);
     let retriever = Retriever::new(test_retriever_config(&storage, reranker));
-    let bm25 = retriever.bm25_recall("consensus").await.unwrap();
+    let bm25 = retriever.bm25_recall_impl("consensus").await.unwrap();
     assert_eq!(bm25.len(), 3, "bm25 should recall all three chunks");
 
     let id_by_text: HashMap<String, String> = {
@@ -600,5 +863,56 @@ mod tests {
     assert_eq!(rerank_map[&id_a], -1.0);
     let ordered_ids: Vec<String> = ordered.into_iter().map(|(id, _)| id).collect();
     assert_eq!(ordered_ids, vec![id_a, id_b, id_c]);
+  }
+
+  #[tokio::test]
+  async fn test_search_stream_event_order() {
+    let storage = Arc::new(test_storage());
+    seed_index(&storage, &[("a.txt", "consensus alpha"), ("b.txt", "consensus beta")]).await;
+
+    let retriever = test_retriever(&storage);
+    let stream = Arc::new(retriever).search_stream("consensus", 5);
+
+    let mut events = Vec::new();
+    {
+      let mut stream = std::pin::pin!(stream);
+      while let Some(event) = stream.as_mut().next().await {
+        events.push(event.expect("stream must not error"));
+      }
+    }
+
+    // The last event must be Completed with the final hits.
+    let Some(docq_core::SearchEvent::Completed { hits, stats }) = events.last() else {
+      panic!("last event must be Completed");
+    };
+    assert!(!hits.is_empty());
+    assert!(stats.total_ms > 0 || stats.total_ms == 0);
+
+    // All events before Completed must be StageStarted / StageFinished pairs.
+    for ev in &events[..events.len() - 1] {
+      match ev {
+        docq_core::SearchEvent::StageStarted { .. } | docq_core::SearchEvent::StageFinished { .. } => {}
+        other => panic!("unexpected event before Completed: {other:?}"),
+      }
+    }
+
+    // Every StageStarted must have a matching StageFinished for the same stage.
+    let mut started = std::collections::HashSet::new();
+    let mut finished = std::collections::HashSet::new();
+    for ev in &events {
+      match ev {
+        docq_core::SearchEvent::StageStarted { stage } => {
+          started.insert(*stage);
+        }
+        docq_core::SearchEvent::StageFinished { stage, .. } => {
+          finished.insert(*stage);
+        }
+        _ => {}
+      }
+    }
+    assert_eq!(started, finished, "each stage must have started and finished");
+    assert!(started.contains(&SearchStage::Bm25Recall));
+    assert!(started.contains(&SearchStage::VectorRecall));
+    assert!(started.contains(&SearchStage::Rerank));
   }
 }
