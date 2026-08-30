@@ -28,6 +28,7 @@ tokenizers = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
 flexi_logger = { workspace = true }
+tokio-stream = "0.1"
 
 [features]
 default = ["pdf", "docx"]

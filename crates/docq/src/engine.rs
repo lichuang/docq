@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use docq_core::{
   Chunker, Collection, Embedder, EngineStatus, IndexEvent, IndexProgressCallback, Llm, LlmConfig, ModelRole, ModelSpec,
-  Reranker, Result, SearchHit, Storage, Verbose, WordSegmenter,
+  Reranker, Result, SearchEvent, SearchHit, Storage, Verbose, WordSegmenter,
 };
 #[cfg(feature = "docx")]
 use docq_indexer::DocxReader;
@@ -16,6 +16,7 @@ use docq_indexer::{
 };
 use docq_model::{FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
 use docq_retrieve::{Retriever, RetrieverConfig};
+use tokio_stream::Stream;
 
 use crate::config::{DocqConfig, RetrievalConfig};
 use docq_storage::SqliteStorage;
@@ -397,6 +398,14 @@ impl Engine {
     self.retriever.search(query, top_k).await
   }
 
+  pub fn search_stream(
+    &self,
+    query: impl Into<String>,
+    top_k: usize,
+  ) -> impl Stream<Item = Result<SearchEvent>> + Send + 'static {
+    self.retriever.clone().search_stream(query, top_k)
+  }
+
   pub async fn ask(&self, query: &str) -> Result<docq_core::Answer> {
     let synth = self.synthesizer.as_ref().ok_or(docq_core::LlmError::NotLoaded)?;
     synth.ask(query).await
@@ -429,6 +438,7 @@ mod tests {
   use super::*;
   use docq_core::{ChunkCandidate, Chunker, Embedder, Llm, Storage};
   use tempfile::TempDir;
+  use tokio_stream::StreamExt;
 
   struct StubEmbedder {
     dim: usize,
@@ -548,6 +558,31 @@ mod tests {
     let hits = engine.search("生日", 5).await.unwrap();
     assert!(!hits.is_empty());
     assert!(hits[0].chunk.text.contains("生日"));
+  }
+
+  #[tokio::test]
+  async fn test_engine_search_stream() {
+    let tmp = TempDir::new().unwrap();
+    let storage = test_storage(&tmp);
+    let engine = Engine::new(test_components(storage));
+
+    let notes_dir = TempDir::new().unwrap();
+    std::fs::write(notes_dir.path().join("note.txt"), "今天是我的生日").unwrap();
+    engine.add_collection("notes", notes_dir.path()).unwrap();
+
+    let stats = engine.index().await.unwrap();
+    assert!(stats.chunks_indexed > 0);
+
+    let mut stream = engine.search_stream("生日", 5);
+    let mut completed_hits = Vec::new();
+    while let Some(event) = stream.next().await {
+      match event.unwrap() {
+        SearchEvent::Completed { hits, .. } => completed_hits = hits,
+        _ => {}
+      }
+    }
+    assert!(!completed_hits.is_empty());
+    assert!(completed_hits[0].chunk.text.contains("生日"));
   }
 
   #[tokio::test]

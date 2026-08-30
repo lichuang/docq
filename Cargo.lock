@@ -960,6 +960,7 @@ dependencies = [
  "tempfile",
  "tokenizers 0.20.4",
  "tokio",
+ "tokio-stream",
  "toml",
 ]
 
