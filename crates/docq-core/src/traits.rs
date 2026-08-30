@@ -96,6 +96,8 @@ pub trait StorageTx {
   fn add_fts_chunks(&mut self, chunk_ids: &[String], tokenized_texts: &[String]) -> Result<()>;
   fn set_model_version(&mut self, role: ModelRole, version: &ModelSpec) -> Result<()>;
   fn add_collection(&mut self, name: &str, path: &str) -> Result<()>;
+  fn delete_collection(&mut self, name: &str) -> Result<()>;
+  fn clear_collections(&mut self) -> Result<()>;
   fn commit(&mut self) -> Result<()>;
 }
 

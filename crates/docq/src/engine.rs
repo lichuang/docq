@@ -310,6 +310,29 @@ impl Engine {
     self.storage.list_collections()
   }
 
+  pub fn add_file(&self, path: impl AsRef<Path>, name: &str) -> Result<()> {
+    let canonical = std::fs::canonicalize(path.as_ref())
+      .map_err(|e| docq_core::StoreError::Io(format!("canonicalize {}: {e}", path.as_ref().display())))?;
+    if !canonical.is_file() {
+      return Err(docq_core::StoreError::Io(format!("{} is not a file", canonical.display())).into());
+    }
+    self.add_collection(&canonical, name)
+  }
+
+  pub fn remove_collection(&self, name: &str) -> Result<()> {
+    let mut tx = self.storage.begin_tx()?;
+    tx.delete_collection(name)?;
+    tx.commit()?;
+    Ok(())
+  }
+
+  pub fn clear_collections(&self) -> Result<()> {
+    let mut tx = self.storage.begin_tx()?;
+    tx.clear_collections()?;
+    tx.commit()?;
+    Ok(())
+  }
+
   pub async fn index(&self) -> Result<IndexStats> {
     let _total = self.verbose.start("index");
     let collections = self.storage.list_collections()?;

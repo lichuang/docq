@@ -657,6 +657,18 @@ impl StorageTx for SqliteTransaction {
     Ok(())
   }
 
+  fn delete_collection(&mut self, name: &str) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    conn.execute("DELETE FROM collections WHERE name = ?1", params![name]).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
+  fn clear_collections(&mut self) -> Result<()> {
+    let conn = self.conn.lock().map_err(|_| poisoned())?;
+    conn.execute("DELETE FROM collections", []).map_err(map_rusqlite)?;
+    Ok(())
+  }
+
   fn commit(&mut self) -> Result<()> {
     if self.committed {
       return Err(StoreError::TransactionAlreadyCommitted.into());
