@@ -296,7 +296,7 @@ impl Engine {
     Ok((components, hub))
   }
 
-  pub fn add_collection(&self, path: impl AsRef<Path>, name: &str) -> Result<()> {
+  pub fn add_collection(&self, name: &str, path: impl AsRef<Path>) -> Result<()> {
     let canonical = std::fs::canonicalize(path.as_ref())
       .map_err(|e| docq_core::StoreError::Io(format!("canonicalize {}: {e}", path.as_ref().display())))?;
     let path_str = canonical.to_string_lossy().to_string();
@@ -310,13 +310,13 @@ impl Engine {
     self.storage.list_collections()
   }
 
-  pub fn add_file(&self, path: impl AsRef<Path>, name: &str) -> Result<()> {
+  pub fn add_file(&self, name: &str, path: impl AsRef<Path>) -> Result<()> {
     let canonical = std::fs::canonicalize(path.as_ref())
       .map_err(|e| docq_core::StoreError::Io(format!("canonicalize {}: {e}", path.as_ref().display())))?;
     if !canonical.is_file() {
       return Err(docq_core::StoreError::Io(format!("{} is not a file", canonical.display())).into());
     }
-    self.add_collection(&canonical, name)
+    self.add_collection(name, &canonical)
   }
 
   pub fn remove_collection(&self, name: &str) -> Result<()> {
@@ -521,7 +521,7 @@ mod tests {
     let engine = Engine::new(test_components(storage));
 
     let notes_dir = TempDir::new().unwrap();
-    engine.add_collection(notes_dir.path(), "notes").unwrap();
+    engine.add_collection("notes", notes_dir.path()).unwrap();
 
     let collections = engine.list_collections().unwrap();
     assert_eq!(collections.len(), 1);
@@ -540,7 +540,7 @@ mod tests {
 
     let notes_dir = TempDir::new().unwrap();
     std::fs::write(notes_dir.path().join("note.txt"), "今天是我的生日").unwrap();
-    engine.add_collection(notes_dir.path(), "notes").unwrap();
+    engine.add_collection("notes", notes_dir.path()).unwrap();
 
     let stats = engine.index().await.unwrap();
     assert!(stats.chunks_indexed > 0);
@@ -558,7 +558,7 @@ mod tests {
 
     let notes_dir = TempDir::new().unwrap();
     std::fs::write(notes_dir.path().join("note.txt"), "定价方案选坐席制").unwrap();
-    engine.add_collection(notes_dir.path(), "notes").unwrap();
+    engine.add_collection("notes", notes_dir.path()).unwrap();
     engine.index().await.unwrap();
 
     let answer = engine.ask("定价方案").await.unwrap();
