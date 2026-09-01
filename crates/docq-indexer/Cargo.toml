@@ -25,10 +25,10 @@ sha2 = { workspace = true }
 chrono = { workspace = true }
 log = { workspace = true }
 rayon = { workspace = true }
-tokio-stream = "0.1"
-pdf-extract = { version = "0.12", optional = true }
-zip = { version = "2", optional = true }
-quick-xml = { version = "0.37", optional = true }
+tokio-stream = { workspace = true }
+pdf-extract = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
 
 [features]
 default = ["pdf", "docx"]
@@ -36,6 +36,6 @@ pdf = ["dep:pdf-extract"]
 docx = ["dep:zip", "dep:quick-xml"]
 
 [dev-dependencies]
-tempfile = "3"
-lopdf = "0.42"
-zip = "2"
+tempfile = { workspace = true }
+lopdf = { workspace = true }
+zip = { workspace = true }

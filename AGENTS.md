@@ -137,3 +137,27 @@ Before committing, make sure:
 | Add a CLI subcommand | `docq` crate's `src/main.rs`, using clap derive |
 | Change the schema | `SqliteStorage::init()`'s `execute_batch` + related CRUD methods; consider a migration path. For v0.1 a simple breaking change is fine. |
 | Add a unit test | Same module as the code under test, in `#[cfg(test)] mod tests`; see the existing 5 tests in `sqlite.rs` for reference |
+
+## Workspace dependency management
+
+- **Declare every dependency version once, in the root `Cargo.toml` under `[workspace.dependencies]`.**
+  This applies to `dependencies`, `dev-dependencies`, and `optional dependencies`.
+
+- **Sub-crate `Cargo.toml` files must not contain inline version numbers.**
+  Always reference workspace-declared dependencies with `{ workspace = true }`.
+
+- **If a sub-crate needs features or wants to mark a dependency as optional, only override those attributes; the version still comes from the workspace.**
+  For example:
+
+  ```toml
+  [dependencies]
+  fastembed = { workspace = true, optional = true }
+  tokio-stream = { workspace = true }
+
+  [dev-dependencies]
+  tempfile = { workspace = true }
+  ```
+
+- **When adding a new dependency, first add it to the root `Cargo.toml`, then reference it from the sub-crates that need it.**
+
+This rule applies to the entire workspace and must be followed for all future dependency changes.

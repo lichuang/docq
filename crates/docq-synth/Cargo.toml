@@ -17,10 +17,10 @@ docq-retrieve = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-regex = "1"
+regex = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
 docq-indexer = { workspace = true }
 docq-storage = { workspace = true }
-tempfile = "3"
+tempfile = { workspace = true }

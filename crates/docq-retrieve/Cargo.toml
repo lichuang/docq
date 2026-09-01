@@ -18,8 +18,8 @@ async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
-tokio-stream = "0.1"
+tokio-stream = { workspace = true }
 
 [dev-dependencies]
 docq-indexer = { workspace = true }
-tempfile = "3"
+tempfile = { workspace = true }

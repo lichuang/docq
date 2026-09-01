@@ -28,7 +28,7 @@ tokenizers = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
 flexi_logger = { workspace = true }
-tokio-stream = "0.1"
+tokio-stream = { workspace = true }
 
 [features]
 default = ["pdf", "docx"]
@@ -36,7 +36,7 @@ pdf = ["docq-indexer/pdf"]
 docx = ["docq-indexer/docx"]
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
 
 [lib]
 name = "docq"

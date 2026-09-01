@@ -39,6 +39,14 @@ dirs = "5"
 toml = "0.8"
 log = "0.4"
 flexi_logger = "0.29"
+tokio-stream = "0.1"
+regex = "1"
+encoding_rs = "0.8"
+pdf-extract = "0.12"
+zip = "2"
+quick-xml = "0.37"
+tempfile = "3"
+lopdf = "0.42"
 docq-core = { path = "crates/docq-core", version = "0.2.0" }
 docq-model = { path = "crates/docq-model", version = "0.2.0" }
 docq-indexer = { path = "crates/docq-indexer", version = "0.2.0" }
