@@ -21,8 +21,8 @@ type SearchEventItem = std::result::Result<SearchEvent, DocqError>;
 type SearchEventSender = Sender<SearchEventItem>;
 
 async fn send_event(tx: &SearchEventSender, event: SearchEvent) -> bool {
-  if let Err(e) = tx.send(Ok(event)).await {
-    log::error!("search stream send failed: {e}");
+  if let Err(e) = tx.send(Ok(event.clone())).await {
+    log::error!("search stream send failed for event {event:?}: {e}");
     false
   } else {
     true
@@ -640,7 +640,6 @@ mod tests {
         },
         chunk_size: 1024,
         chunk_overlap: 102,
-        progress: None,
       });
       indexer.index_file(&path).await.unwrap();
     }

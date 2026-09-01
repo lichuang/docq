@@ -103,10 +103,9 @@ pub trait StorageTx {
 
 /// Events emitted while building or rebuilding an index.
 ///
-/// Callers supply a callback `Fn(IndexEvent) + Send + Sync` (typically via
-/// [`IndexerConfig::progress`](docq_indexer::IndexerConfig::progress) or
-/// [`Engine::index_with_progress`](docq::Engine::index_with_progress)) to
-/// stream these events to a UI.
+/// Consume these events via [`Indexer::index_file_stream`](docq_indexer::Indexer::index_file_stream),
+/// [`Indexer::index_directory_stream`](docq_indexer::Indexer::index_directory_stream), or the
+/// [`Engine::index_stream`](docq::Engine::index_stream) family of methods.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IndexEvent {
   /// Indexing started; number of sources/files to process.
@@ -154,6 +153,10 @@ pub enum IndexEvent {
     files: usize,
     /// Total number of chunks indexed.
     chunks: usize,
+    /// Total number of files skipped because they were unchanged.
+    files_skipped: usize,
+    /// Total number of files removed because they no longer exist.
+    files_removed: usize,
   },
 
   /// An error occurred.
@@ -162,6 +165,3 @@ pub enum IndexEvent {
     message: String,
   },
 }
-
-/// Type alias for the indexing progress callback.
-pub type IndexProgressCallback = dyn Fn(IndexEvent) + Send + Sync;

@@ -191,7 +191,6 @@ mod tests {
         },
         chunk_size: 1024,
         chunk_overlap: 102,
-        progress: None,
       });
       indexer.index_file(&path).await.unwrap();
     }

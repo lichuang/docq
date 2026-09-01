@@ -15,4 +15,4 @@ pub use reader::TextFileReader;
 pub use reader_registry::ReaderRegistry;
 pub use tokenizer::{JiebaSegmenter, jieba_tokenize};
 
-pub use indexer::{IndexStats, Indexer, IndexerConfig};
+pub use indexer::{IndexStats, Indexer, IndexerConfig, collect_index_stats};

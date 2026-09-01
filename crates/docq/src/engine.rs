@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use docq_core::{
-  Chunker, Collection, Embedder, EngineStatus, IndexEvent, IndexProgressCallback, Llm, LlmConfig, ModelRole, ModelSpec,
-  Reranker, Result, SearchEvent, SearchHit, Storage, Verbose, WordSegmenter,
+  Chunker, Collection, Embedder, EngineStatus, IndexEvent, Llm, LlmConfig, ModelRole, ModelSpec, Reranker, Result,
+  SearchEvent, SearchHit, Storage, Verbose, WordSegmenter,
 };
 #[cfg(feature = "docx")]
 use docq_indexer::DocxReader;
@@ -13,6 +13,7 @@ use docq_indexer::DocxReader;
 use docq_indexer::PdfReader;
 use docq_indexer::{
   IndexStats, Indexer, IndexerConfig, JiebaSegmenter, ReaderRegistry, SentenceSplitter, TextFileReader,
+  collect_index_stats,
 };
 use docq_model::{FastEmbedEmbedder, FastEmbedReranker, GgufLlm, ModelHub};
 use docq_retrieve::{Retriever, RetrieverConfig};
@@ -82,7 +83,6 @@ impl Engine {
       embedding_spec,
       chunk_size,
       chunk_overlap,
-      progress: None,
     });
 
     let retriever = Arc::new(Retriever::new(RetrieverConfig {
@@ -336,62 +336,30 @@ impl Engine {
 
   pub async fn index(&self) -> Result<IndexStats> {
     let _total = self.verbose.start("index");
-    let collections = self.storage.list_collections()?;
-    let mut stats = IndexStats::default();
-    for col in collections {
-      let s = self.indexer.index_directory(Path::new(&col.path)).await?;
-      stats = stats + s;
-    }
-    Ok(stats)
+    collect_index_stats(self.index_stream()?).await
   }
 
-  pub async fn index_with_progress(&self, progress: &IndexProgressCallback) -> Result<IndexStats> {
-    let _total = self.verbose.start("index");
+  pub fn index_stream(&self) -> Result<impl Stream<Item = Result<IndexEvent>> + Send + 'static> {
     let collections = self.storage.list_collections()?;
-    let mut stats = IndexStats::default();
-    for col in collections {
-      let s = self.indexer.index_directory_with_progress(Path::new(&col.path), Some(progress)).await?;
-      let chunks = s.chunks_indexed;
-      stats = stats + s;
-      progress(IndexEvent::SourceComplete {
-        source_id: col.name.clone(),
-        chunks,
-      });
-    }
-    progress(IndexEvent::Complete {
-      files: stats.files_indexed,
-      chunks: stats.chunks_indexed,
-    });
-    Ok(stats)
+    let sources = collections.into_iter().map(|c| (c.name, c.path)).collect();
+    let indexer = self.indexer.clone();
+    Ok(indexer.index_sources_stream(sources))
   }
 
   pub async fn index_one(&self, name: &str) -> Result<IndexStats> {
     let _total = self.verbose.start("index one collection");
-    let collections = self.storage.list_collections()?;
-    let col = collections
-      .into_iter()
-      .find(|c| c.name == name)
-      .ok_or_else(|| docq_core::StoreError::NotFound(name.to_string()))?;
-    self.indexer.index_directory(Path::new(&col.path)).await
+    collect_index_stats(self.index_one_stream(name)?).await
   }
 
-  pub async fn index_one_with_progress(&self, name: &str, progress: &IndexProgressCallback) -> Result<IndexStats> {
-    let _total = self.verbose.start("index one collection");
+  pub fn index_one_stream(
+    &self,
+    name: impl Into<String>,
+  ) -> Result<impl Stream<Item = Result<IndexEvent>> + Send + 'static> {
+    let name = name.into();
     let collections = self.storage.list_collections()?;
-    let col = collections
-      .into_iter()
-      .find(|c| c.name == name)
-      .ok_or_else(|| docq_core::StoreError::NotFound(name.to_string()))?;
-    let stats = self.indexer.index_directory_with_progress(Path::new(&col.path), Some(progress)).await?;
-    progress(IndexEvent::SourceComplete {
-      source_id: col.name.clone(),
-      chunks: stats.chunks_indexed,
-    });
-    progress(IndexEvent::Complete {
-      files: stats.files_indexed,
-      chunks: stats.chunks_indexed,
-    });
-    Ok(stats)
+    let col = collections.into_iter().find(|c| c.name == name).ok_or(docq_core::StoreError::NotFound(name))?;
+    let indexer = self.indexer.clone();
+    Ok(indexer.index_sources_stream(vec![(col.name, col.path)]))
   }
 
   pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<SearchHit>> {
@@ -583,6 +551,56 @@ mod tests {
     }
     assert!(!completed_hits.is_empty());
     assert!(completed_hits[0].chunk.text.contains("生日"));
+  }
+
+  #[tokio::test]
+  async fn test_engine_index_stream() {
+    let tmp = TempDir::new().unwrap();
+    let storage = test_storage(&tmp);
+    let engine = Engine::new(test_components(storage));
+
+    let notes_dir = TempDir::new().unwrap();
+    std::fs::write(notes_dir.path().join("note.txt"), "今天是我的生日").unwrap();
+    engine.add_collection("notes", notes_dir.path()).unwrap();
+
+    let mut stream = engine.index_stream().unwrap();
+    let mut completed = None;
+    let mut source_complete = None;
+    while let Some(event) = stream.next().await {
+      match event.unwrap() {
+        IndexEvent::SourceComplete { source_id, chunks } => source_complete = Some((source_id, chunks)),
+        IndexEvent::Complete { files, chunks, .. } => completed = Some((files, chunks)),
+        _ => {}
+      }
+    }
+    assert!(completed.is_some());
+    let (files, chunks) = completed.unwrap();
+    assert_eq!(files, 1);
+    assert!(chunks > 0);
+    assert_eq!(source_complete.map(|(id, _)| id), Some("notes".to_string()));
+  }
+
+  #[tokio::test]
+  async fn test_engine_index_one_stream() {
+    let tmp = TempDir::new().unwrap();
+    let storage = test_storage(&tmp);
+    let engine = Engine::new(test_components(storage));
+
+    let notes_dir = TempDir::new().unwrap();
+    std::fs::write(notes_dir.path().join("note.txt"), "定价方案选坐席制").unwrap();
+    engine.add_collection("notes", notes_dir.path()).unwrap();
+
+    let mut stream = engine.index_one_stream("notes").unwrap();
+    let mut completed = None;
+    while let Some(event) = stream.next().await {
+      if let IndexEvent::Complete { files, chunks, .. } = event.unwrap() {
+        completed = Some((files, chunks));
+      }
+    }
+    assert!(completed.is_some());
+    let (files, chunks) = completed.unwrap();
+    assert_eq!(files, 1);
+    assert!(chunks > 0);
   }
 
   #[tokio::test]

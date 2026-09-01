@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 /// Registry of file readers, keyed by file extension.
 /// Holds one `Arc<dyn FileReader>` per registered reader, and dispatches
 /// `read(path)` calls to the reader whose `extensions()` covers the file.
+#[derive(Clone)]
 pub struct ReaderRegistry {
   readers: Vec<Arc<dyn FileReader>>,
   ext_map: HashMap<String, usize>,

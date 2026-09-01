@@ -996,6 +996,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokenizers 0.20.4",
  "tokio",
+ "tokio-stream",
  "walkdir",
  "zip",
 ]
