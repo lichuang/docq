@@ -176,3 +176,82 @@
 
 - index by multi thread
 - use lancedb for vector storage/search
+
+## 七、README Roadmap
+
+> 以下条目来自 `README.md` 的 🗺️ Roadmap，需要在 `docs/todo.md` 中补充更详细的技术说明和实现思路。
+
+### R-1. MCP server for agent integration
+
+- 目标：把 `docq` 暴露为 MCP（Model Context Protocol）server，让 Claude Code / Claude Desktop / 其他 MCP client 可以直接调用。
+- 能力设计：
+  - `search`：按关键词/语义检索文档片段。
+  - `ask`：基于检索结果生成带引用的自然语言答案。
+  - `status`：返回索引健康度、集合列表、模型加载状态。
+- 价值：解决“每次 CLI 调用都重新加载模型”的性能问题（MCP server 可常驻内存，模型只加载一次）。
+- 参考：QMD 的 MCP 实现（`qmd mcp`）。
+
+### R-2. LLM query expansion for hybrid retrieval
+
+- 目标：在现有 hybrid retrieval（BM25 + vector + RRF + rerank）之前，增加 LLM 查询扩展阶段，提升召回率，特别是用户用词和文档用词不一致的场景。
+- 具体做法：
+  1. 用本地 LLM 对原始查询生成多个检索友好的变体，例如：
+     - **同义改写**：把口语化问题改写成文档中更可能出现的书面表达。
+     - **关键词提取**：从长问题中抽取核心检索词。
+     - **HyDE（Hypothetical Document Embeddings）**：让 LLM 生成一段假设答案，再用这段答案做向量检索。
+  2. 原始查询和扩展后的查询分别送入 BM25 和 vector 后端。
+  3. 所有结果用 RRF 融合，再进入现有的 cross-encoder rerank。
+- 需要解决的问题：
+  - **成本控制**：LLM 扩展本身有推理开销，需要缓存扩展结果（query → expanded queries）。
+  - **质量开关**：允许用户关闭扩展（`--no-expand`），避免简单查询被过度改写。
+  - **扩展数量**：默认生成 1–2 个变体即可，太多会显著降低速度并引入噪声。
+  - **与中文优化结合**：扩展后的查询仍需经过 jieba 分词再走 BM25。
+- 参考实现：QMD 使用 fine-tuned 的 query-expansion 模型生成 1–2 个变体，并对原始查询加权 ×2。
+
+### R-3. xlsx / csv indexing
+
+- 目标：支持把 Excel / CSV 文件作为文档来源加入索引。
+- 技术点：
+  - 把表格按行或按单元格文本转成可检索的文本块。
+  - 需要保留行号/列号/ sheet 名等元数据，方便 answer 引用时定位到具体单元格。
+  - 可考虑把每行渲染成 `"列名: 值, 列名: 值..."` 的文本形式。
+
+### R-4. File-watcher auto-indexing
+
+- 目标：索引建立后，监听文件系统变化，自动增量更新索引。
+- 方案选择：
+  - 方案 A：`notify` crate 监听目录事件，MCP server / daemon 模式中长期运行。
+  - 方案 B：提供 `docq watch` 子命令，前台运行一个 watcher。
+- 注意：需要避免频繁触发全量重建，只对变更文件做增量 index。
+
+### R-5. `docq model` subcommand for model management
+
+- 目标：提供模型管理 CLI，替代用户手动编辑 `config.toml` 和下载模型。
+- 能力：
+  - `docq model list`：列出已配置/已下载的模型。
+  - `docq model pull <model>`：下载模型到 `--model-cache`。
+  - `docq model default`：按当前平台/语言推荐默认模型组合。
+  - `docq model remove`：清理不再使用的模型文件。
+
+### R-6. Customizable output formats (e.g. JSON, CSV, Markdown)
+
+- 目标：`search` / `ask` / `status` 等命令支持多种机器可读输出格式，方便接入脚本和其他工具。
+- 优先级：
+  1. JSON（已有基础，需要统一 schema 和稳定性）。
+  2. Markdown：适合直接把结果贴进 LLM prompt 或笔记。
+  3. CSV：适合表格化分析搜索结果。
+- 设计：`--format <json|md|csv>` 全局选项，统一由 CLI 层做序列化，而不是每个子命令自己处理。
+
+### R-7. Cited answers with source snippets and referenced content
+
+- 目标：`docq ask` 不仅返回 `[N]` 引用编号，还能输出每个引用对应的原文片段。
+- 形式：
+  - CLI 默认输出：答案正文 + 引用列表（每条含文件路径、行号范围、原文摘要）。
+  - JSON 输出：增加 `citations[].content` 字段。
+- 实现：复用 `Retriever` 返回的 chunk 文本，在 `docq-synth` 组装 prompt 时保留 chunk 原文，回答生成后把引用编号和 chunk 做映射。
+
+### R-8. Prebuilt release binaries
+
+- 目标：为 macOS / Linux / Windows 提供预编译二进制，降低安装门槛。
+- 当前状态：CI 只发布 CPU 版本，GPU 版本需要用户从源码编译。
+- 后续：参考 P4-30，增加多平台 GPU 加速二进制（Metal / Vulkan / CUDA）。
